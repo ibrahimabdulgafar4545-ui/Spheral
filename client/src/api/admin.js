@@ -1,0 +1,27 @@
+import api from './axios';
+
+export const adminAPI = {
+  getStats: () => api.get('/admin/stats'),
+  getReports: (status) => api.get(`/admin/reports?status=${status || 'pending'}`),
+  updateReportStatus: (reportId, status, actionDetails) => api.put(`/admin/reports/${reportId}/status`, { status, actionDetails }),
+  getUsers: (query) => api.get(`/admin/users?search=${query || ''}`),
+  updateUserStatus: (userId, status, reason) => api.put(`/admin/users/${userId}/status`, { status, reason }),
+  getTickets: (status) => api.get(`/admin/support?status=${status || ''}`),
+  updateTicketStatus: (ticketId, status) => api.put(`/admin/support/${ticketId}/status`, { status }),
+  generateAIReply: (ticketId) => api.post(`/admin/support/${ticketId}/generate-reply`),
+  sendAIReply: (ticketId, message) => api.post(`/admin/support/${ticketId}/send-reply`, { message }),
+  toggleUserVerification: (userId, verified) => api.put(`/admin/users/${userId}/verify`, { verified }),
+  toggleUserAdmin: (userId, isAdmin) => api.put(`/admin/users/${userId}/admin`, { isAdmin }),
+  sendBroadcast: (message) => api.post('/admin/broadcast', { message }),
+  getFeedback: () => api.get('/admin/support?type=feedback'),
+  getFeedbackInsights: () => api.get('/admin/feedback-insights'),
+  generateFeedbackInsights: () => api.post('/admin/feedback-insights/generate'),
+  getEngagementAnalytics: () => api.get('/admin/engagement'),
+  getSystemHealth: () => api.get('/admin/health'),
+  getGeoInsights: () => api.get('/admin/geo-insights'),
+  getScheduledAnnouncements: () => api.get('/admin/announcements/scheduled'),
+  scheduleAnnouncement: (message, scheduledFor) => api.post('/admin/announcements/schedule', { message, scheduledFor }),
+  sendEmailCampaign: (subject, body, filter) => api.post('/admin/email-campaign', { subject, body, filter }),
+  getSettings: () => api.get('/admin/settings'),
+  updateSettings: (settings) => api.put('/admin/settings', settings),
+};
