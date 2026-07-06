@@ -100,7 +100,7 @@ export default function CreativeEditor({ file, type = 'story', embed = null, onC
       setPlayingPreview(null);
     } else {
       audioRef.current.src = track.audio;
-      audioRef.current.play();
+      audioRef.current.play().catch(() => {});
       setPlayingPreview(track.id);
     }
   };

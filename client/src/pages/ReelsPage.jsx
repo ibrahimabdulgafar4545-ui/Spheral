@@ -920,7 +920,7 @@ function ReelItem({ reel, currentUser, isActive, onVisible, onLike, onSave, onCo
   const togglePlay = () => {
     if (!videoRef.current) return;
     if (videoRef.current.paused) {
-      videoRef.current.play();
+      videoRef.current.play().catch(() => {});
       setPaused(false);
     } else {
       videoRef.current.pause();
