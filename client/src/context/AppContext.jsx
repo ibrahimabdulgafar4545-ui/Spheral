@@ -311,7 +311,7 @@ export function AppProvider({ children }) {
   useEffect(() => {
     if (state.isAuthenticated && state.user) {
       // Connect to backend Express server port 5000
-      const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
+      const socketUrl = import.meta.env.VITE_SOCKET_URL || (import.meta.env.MODE === 'production' ? '' : 'http://localhost:5000');
       const socketInstance = io(socketUrl);
 
       // Join DMs channel room

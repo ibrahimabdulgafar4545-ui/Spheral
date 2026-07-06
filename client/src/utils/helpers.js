@@ -45,7 +45,8 @@ export function getAssetUrl(path) {
     return path;
   }
   const cleanPath = path.startsWith('/') ? path.slice(1) : path;
-  return `http://localhost:5000/${cleanPath}`;
+  const baseUrl = import.meta.env.MODE === 'production' ? '' : 'http://localhost:5000';
+  return `${baseUrl}/${cleanPath}`;
 }
 
 export function parseMentions(text) {

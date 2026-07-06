@@ -7,8 +7,8 @@ import {
 } from 'react-icons/fi';
 import { BsBookmarkFill } from 'react-icons/bs';
 import { useApp } from '../../context/AppContext';
-import { timeAgo, formatCount, getAssetUrl, parseMentions } from '../../utils/helpers';
-import CommentSection from './CommentSection';
+import { timeAgo, formatCount, parseMentions, getAssetUrl } from '../../utils/helpers';
+import VerifiedBadge from '../ui/VerifiedBadge';
 import Avatar from '../ui/Avatar';
 import clsx from 'clsx';
 import ReportModal from '../modals/ReportModal';
@@ -289,7 +289,7 @@ export default function Post({ post, onArchiveToggle }) {
             onClick={() => setImageOpen(true)}
           >
             <img
-              src={post.image.startsWith('http') ? post.image : `http://localhost:5000${post.image}`}
+              src={getAssetUrl(post.image)}
               alt=""
               className="w-full max-h-[520px] object-cover hover:brightness-95 transition-all duration-500"
               loading="lazy"
@@ -426,7 +426,7 @@ export default function Post({ post, onArchiveToggle }) {
             <FiX size={20} />
           </button>
           <img
-            src={post.image.startsWith('http') ? post.image : `http://localhost:5000${post.image}`}
+            src={getAssetUrl(post.image)}
             alt=""
             className="max-w-full max-h-[90vh] object-contain rounded-xl shadow-card-lg animate-scale-in"
             onClick={(e) => e.stopPropagation()}

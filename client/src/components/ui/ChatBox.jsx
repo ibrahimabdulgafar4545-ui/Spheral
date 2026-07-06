@@ -422,23 +422,23 @@ export default function ChatBox() {
                           <div className="mb-2 max-w-full rounded-lg overflow-hidden border border-white/15">
                             {msg.type === 'image' && (
                               <img
-                                src={msg.fileUrl.startsWith('http') ? msg.fileUrl : `http://localhost:5000${msg.fileUrl}`}
+                                src={getAssetUrl(msg.fileUrl)}
                                 alt="Attachment"
                                 className="max-h-48 object-cover cursor-pointer hover:opacity-90 transition-opacity"
-                                onClick={() => setZoomedImage(msg.fileUrl.startsWith('http') ? msg.fileUrl : `http://localhost:5000${msg.fileUrl}`)}
+                                onClick={() => setZoomedImage(getAssetUrl(msg.fileUrl))}
                                 title="Click to zoom / download"
                               />
                             )}
                             {msg.type === 'video' && (
                               <video
-                                src={msg.fileUrl.startsWith('http') ? msg.fileUrl : `http://localhost:5000${msg.fileUrl}`}
+                                src={getAssetUrl(msg.fileUrl)}
                                 controls
                                 className="max-h-48"
                               />
                             )}
                             {msg.type === 'audio' && (
                               <audio
-                                src={msg.fileUrl.startsWith('http') ? msg.fileUrl : `http://localhost:5000${msg.fileUrl}`}
+                                src={getAssetUrl(msg.fileUrl)}
                                 controls
                                 className="max-w-full p-1 h-9 rounded bg-sp-overlay"
                               />
