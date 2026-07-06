@@ -450,7 +450,7 @@ export default function SignupPage() {
           {/* ─── Step 2: Code Verification ─────────────────────── */}
           {step === 2 && (
             <form onSubmit={handleVerify} className="animate-fade-in flex flex-col gap-4">
-              <h2 className="text-xl font-bold text-sp-text">Verify your {signupMethod}</h2>
+              <h2 className="text-xl font-bold text-sp-text">Verify your email address</h2>
               <p className="text-sm text-sp-sub leading-relaxed">
                 We sent a 6-digit verification code to <strong className="text-sp-text">{getIdentifier()}</strong>.
               </p>
