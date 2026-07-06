@@ -45,7 +45,7 @@ export function getAssetUrl(path) {
     return path;
   }
   const cleanPath = path.startsWith('/') ? path.slice(1) : path;
-  const baseUrl = import.meta.env.MODE === 'production' ? '' : 'http://localhost:5000';
+  const baseUrl = import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace('/api', '') : (import.meta.env.MODE === 'production' ? 'https://spheral.onrender.com' : 'http://localhost:5000');
   return `${baseUrl}/${cleanPath}`;
 }
 
