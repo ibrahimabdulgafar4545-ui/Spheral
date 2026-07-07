@@ -146,35 +146,7 @@ router.post('/', protect, uploadMessageFile, async (req, res, next) => {
       } else if (file.mimetype.startsWith('audio/') || file.mimetype === 'application/octet-stream') {
         messageType = 'audio';
       }
-
-      // Build a fake message for immediate UI feedback (no DB save yet)
-      const fakeMsg = {
-        _id: new mongoose.Types.ObjectId(),
-        conversation: null,
-        sender: myId,
-        receiver: receiverId,
-        content: '',
-        type: messageType,
-        fileUrl,
-        status: 'sent',
-        parentMessage: parentMessageId || null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-
-      // Emit back to sender's socket only (so their local UI adds it as a pending/sent message)
-      const io = req.app.get('io');
-      if (io) {
-        const senderSocketId = onlineUsers.get(myId);
-        if (senderSocketId) {
-          io.to(senderSocketId).emit('messageSent', fakeMsg);
-        }
-      }
-
-      return res.status(201).json({ success: true, message: fakeMsg });
     }
-
-
 
     const message = await Message.create({
       conversation: conversation._id,
