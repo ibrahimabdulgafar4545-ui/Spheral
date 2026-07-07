@@ -132,6 +132,7 @@ const toneGenerator = new ToneGenerator();
 export default function CallOverlay({ callData, callState, onAccept, onDecline, onEnd, currentUser }) {
   const [muted, setMuted] = useState(false);
   const [videoOff, setVideoOff] = useState(!callData?.video);
+  const [cameraError, setCameraError] = useState(false);
   const [duration, setDuration] = useState(0);
   const timerRef = useRef(null);
 
@@ -233,20 +234,30 @@ export default function CallOverlay({ callData, callState, onAccept, onDecline, 
         // We use a temp token or null (if Agora App ID runs in testing mode without token verification)
         await client.join(AGORA_APP_ID, callData.channelName, null, currentUser.id || currentUser._id);
 
-        // 4. Create and publish local tracks
+        // 4. Create and publish local tracks individually
         const tracks = [];
-        localAudioTrackRef.current = await AgoraRTC.createMicrophoneAudioTrack();
-        tracks.push(localAudioTrackRef.current);
-
-        if (callData.video) {
-          localVideoTrackRef.current = await AgoraRTC.createCameraVideoTrack();
-          tracks.push(localVideoTrackRef.current);
-          setTimeout(() => {
-            localVideoTrackRef.current?.play('local-video-container');
-          }, 100);
+        try {
+          localAudioTrackRef.current = await AgoraRTC.createMicrophoneAudioTrack();
+          tracks.push(localAudioTrackRef.current);
+        } catch (audioErr) {
+          console.error('Microphone access denied or not found', audioErr);
         }
 
-        if (active) {
+        if (callData.video && !videoOff) {
+          try {
+            localVideoTrackRef.current = await AgoraRTC.createCameraVideoTrack();
+            tracks.push(localVideoTrackRef.current);
+            setTimeout(() => {
+              localVideoTrackRef.current?.play('local-video-container');
+            }, 100);
+          } catch (videoErr) {
+            console.error('Camera access denied or not found', videoErr);
+            setCameraError(true);
+            setVideoOff(true);
+          }
+        }
+
+        if (active && tracks.length > 0) {
           await client.publish(tracks);
           console.log('Agora RTC channel published successfully!');
         }
@@ -415,6 +426,15 @@ export default function CallOverlay({ callData, callState, onAccept, onDecline, 
                   />
                 ) : (
                   <div id="remote-video-container" className="w-full h-full bg-black" />
+                )}
+                {/* Overlay for Mock OR Missing Camera */}
+                {(isMockCall || cameraError || (!localVideoTrackRef.current && videoOff)) && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 rounded-xl">
+                    <FiCameraOff size={32} className="text-white/50 mb-2" />
+                    <span className="text-white/70 text-sm font-medium">
+                      {cameraError ? 'Camera Unavailable' : 'Camera Off'}
+                    </span>
+                  </div>
                 )}
                 {(!isMockCall && !remoteUser) && (
                   <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400">

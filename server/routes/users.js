@@ -65,7 +65,22 @@ router.get('/:id', protect, async (req, res, next) => {
       });
     }
 
-    res.status(200).json({ success: true, user });
+    let returnedUser = user.toObject();
+    
+    // Blocking check: if A blocks B, B cannot see A's online status
+    const me = await User.findById(req.user.id).select('blockedUsers');
+    const userWhoBlockedMe = await User.find({ blockedUsers: req.user.id }).select('_id');
+    const excludedIds = [
+      ...(me.blockedUsers || []).map(id => id.toString()),
+      ...userWhoBlockedMe.map(u => u._id.toString())
+    ];
+
+    if (excludedIds.includes(returnedUser._id.toString())) {
+      returnedUser.isOnline = false;
+      returnedUser.lastSeen = null;
+    }
+
+    res.status(200).json({ success: true, user: returnedUser });
   } catch (error) {
     next(error);
   }

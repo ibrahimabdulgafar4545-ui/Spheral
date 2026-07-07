@@ -30,8 +30,10 @@ const REACTIONS = [
 
 export default function ReactionPicker({ onSelect, current, children, positionClass = 'left-1/2 -translate-x-1/2' }) {
   const [visible, setVisible] = useState(false);
+  const [dynamicStyle, setDynamicStyle] = useState({ minWidth: '340px' });
   const timerRef = useRef(null);
   const pickerRef = useRef(null);
+  const wrapperRef = useRef(null);
 
   // Desktop hover trigger
   const handleMouseEnter = () => {
@@ -44,7 +46,7 @@ export default function ReactionPicker({ onSelect, current, children, positionCl
     clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
       setVisible(false);
-    }, 350); // 350ms buffer to easily cross any gap and pick reactions
+    }, 350); 
   };
 
   // Mobile long‑press trigger
@@ -57,15 +59,63 @@ export default function ReactionPicker({ onSelect, current, children, positionCl
   // Click‑outside to close
   useEffect(() => {
     const onClick = (e) => {
-      if (pickerRef.current && !pickerRef.current.contains(e.target)) setVisible(false);
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target)) setVisible(false);
     };
     document.addEventListener('mousedown', onClick);
     return () => document.removeEventListener('mousedown', onClick);
   }, []);
 
+  // Smart positioning logic
+  useEffect(() => {
+    if (visible && pickerRef.current && wrapperRef.current) {
+      const wrapperRect = wrapperRef.current.getBoundingClientRect();
+      const viewportWidth = window.innerWidth;
+      
+      let newStyle = { minWidth: '340px', zIndex: 999999 }; // Extremely high z-index to beat dropdowns
+
+      // Base position based on props
+      if (positionClass.includes('right-0')) {
+        newStyle.right = '0';
+        newStyle.left = 'auto';
+      } else if (positionClass.includes('left-0')) {
+        newStyle.left = '0';
+        newStyle.right = 'auto';
+      } else {
+        newStyle.left = '50%';
+        newStyle.transform = 'translateX(-50%)';
+      }
+
+      // Edge detection and flipping
+      // If expanding right pushes it off screen:
+      if (wrapperRect.left + 340 > viewportWidth) {
+        newStyle.right = '0';
+        newStyle.left = 'auto';
+        newStyle.transform = 'none';
+      }
+      // If expanding left pushes it off screen:
+      if (wrapperRect.right - 340 < 0) {
+        newStyle.left = '0';
+        newStyle.right = 'auto';
+        newStyle.transform = 'none';
+      }
+
+      // Vertical overflow: if close to top edge, flip to bottom
+      if (wrapperRect.top < 80) {
+        newStyle.top = '100%';
+        newStyle.marginTop = '10px';
+      } else {
+        newStyle.bottom = '100%';
+        newStyle.marginBottom = '10px';
+      }
+
+      setDynamicStyle(newStyle);
+    }
+  }, [visible, positionClass]);
+
   return (
     <div
-      className="relative inline-block w-full"
+      ref={wrapperRef}
+      className={`relative inline-block w-full ${visible ? 'z-[99999]' : ''}`}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       onTouchStart={handleTouchStart}
@@ -77,8 +127,8 @@ export default function ReactionPicker({ onSelect, current, children, positionCl
       {visible && (
         <div
           ref={pickerRef}
-          className={`absolute -top-16 flex space-x-1 sm:space-x-2 bg-gradient-to-b from-sp-card to-sp-bg backdrop-blur-md rounded-full shadow-2xl p-2 z-[999] border border-sp-border/55 animate-scale-in ${positionClass}`}
-          style={{ minWidth: '340px', left: positionClass.includes('left') ? undefined : '50%', transform: positionClass.includes('translate') ? undefined : 'translateX(-50%)' }}
+          className={`absolute flex space-x-1 sm:space-x-2 bg-gradient-to-b from-sp-card to-sp-bg backdrop-blur-md rounded-full shadow-[0_10px_40px_rgba(0,0,0,0.5)] p-2 animate-scale-in`}
+          style={dynamicStyle}
         >
           {REACTIONS.map((r) => {
             const IconComponent = r.component;
