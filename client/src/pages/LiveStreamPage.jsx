@@ -139,6 +139,25 @@ export default function LiveStreamPage() {
 
     let remoteVideo = null;
 
+    const drawVideoCover = (video, destX, destY, destWidth, destHeight) => {
+      if (!video.videoWidth || !video.videoHeight) {
+        ctx.drawImage(video, destX, destY, destWidth, destHeight);
+        return;
+      }
+      const videoAspect = video.videoWidth / video.videoHeight;
+      const destAspect = destWidth / destHeight;
+      let sX = 0, sY = 0, sW = video.videoWidth, sH = video.videoHeight;
+
+      if (videoAspect > destAspect) {
+        sW = video.videoHeight * destAspect;
+        sX = (video.videoWidth - sW) / 2;
+      } else {
+        sH = video.videoWidth / destAspect;
+        sY = (video.videoHeight - sH) / 2;
+      }
+      ctx.drawImage(video, sX, sY, sW, sH, destX, destY, destWidth, destHeight);
+    };
+
     const draw = () => {
       ctx.fillStyle = '#000000';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -157,10 +176,10 @@ export default function LiveStreamPage() {
       }
 
       if (remoteVideo && remoteVideo.readyState >= 2) {
-        ctx.drawImage(localVideo, 0, 0, canvas.width, canvas.height / 2);
-        ctx.drawImage(remoteVideo, 0, canvas.height / 2, canvas.width, canvas.height / 2);
+        drawVideoCover(localVideo, 0, 0, canvas.width, canvas.height / 2);
+        drawVideoCover(remoteVideo, 0, canvas.height / 2, canvas.width, canvas.height / 2);
       } else if (localVideo.readyState >= 2) {
-        ctx.drawImage(localVideo, 0, 0, canvas.width, canvas.height);
+        drawVideoCover(localVideo, 0, 0, canvas.width, canvas.height);
       }
       drawLoopRef.current = requestAnimationFrame(draw);
     };
