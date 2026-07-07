@@ -76,7 +76,9 @@ router.post('/', protect, uploadStoryCreative, async (req, res, next) => {
 
     let imagePath = null;
     if (imageFile) {
-      imagePath = `/uploads/images/${imageFile.filename}`;
+      imagePath = imageFile.path && imageFile.path.startsWith('http') 
+        ? imageFile.path 
+        : `/uploads/images/${imageFile.filename}`;
     } else if (req.body.image) {
       imagePath = req.body.image;
     } else {
@@ -110,17 +112,6 @@ router.post('/', protect, uploadStoryCreative, async (req, res, next) => {
     let embed = null;
     if (req.body.embed) {
       try { embed = JSON.parse(req.body.embed); } catch (e) { console.error('Failed to parse story embed', e); }
-    }
-
-    let imagePath = null;
-    if (imageFile) {
-      imagePath = imageFile.path && imageFile.path.startsWith('http') 
-        ? imageFile.path 
-        : `/uploads/images/${imageFile.filename}`;
-    } else if (req.body.image) {
-      imagePath = req.body.image;
-    } else {
-      return res.status(400).json({ success: false, message: 'Please upload or provide an image for the story' });
     }
 
     const audioUrl = customAudioFile 
