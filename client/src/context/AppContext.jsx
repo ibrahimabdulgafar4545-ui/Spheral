@@ -307,15 +307,32 @@ export function AppProvider({ children }) {
     checkAuth();
   }, [state.isAuthenticated]);
 
+  const activeChatRef = useRef(activeChat);
+  const userRef = useRef(state.user);
+  const friendsListRef = useRef(state.friendsList);
+
+  useEffect(() => {
+    activeChatRef.current = activeChat;
+  }, [activeChat]);
+
+  useEffect(() => {
+    userRef.current = state.user;
+  }, [state.user]);
+
+  useEffect(() => {
+    friendsListRef.current = state.friendsList;
+  }, [state.friendsList]);
+
   // Socket.io Real-time Event Subscriptions
   useEffect(() => {
-    if (state.isAuthenticated && state.user) {
+    const currentUserId = state.user?.id || state.user?._id;
+    if (state.isAuthenticated && currentUserId) {
       // Connect to backend Express server port 5000
       const socketUrl = import.meta.env.VITE_SOCKET_URL || (import.meta.env.MODE === 'production' ? 'https://spheral.onrender.com' : 'http://localhost:5000');
       const socketInstance = io(socketUrl);
 
       // Join DMs channel room
-      socketInstance.emit('join', state.user.id || state.user._id);
+      socketInstance.emit('join', currentUserId);
       setSocket(socketInstance);
 
       // Status updates
@@ -323,7 +340,7 @@ export function AppProvider({ children }) {
         dispatch({
           type: Actions.SET_FRIENDS_DATA,
           payload: {
-            friends: state.friendsList.map(f =>
+            friends: friendsListRef.current.map(f =>
               (f.id === userId || f._id === userId) ? { ...f, isOnline, lastSeen } : f
             )
           }
@@ -351,8 +368,10 @@ export function AppProvider({ children }) {
 
       // Receive DMs
       socketInstance.on('receiveMessage', (message) => {
-        const activeChatId = activeChat?.id || activeChat?._id;
-        if (activeChat && (activeChatId === message.sender.id || activeChatId === message.sender._id)) {
+        const currentActiveChat = activeChatRef.current;
+        const activeChatId = currentActiveChat?.id || currentActiveChat?._id;
+        const currentUser = userRef.current;
+        if (currentActiveChat && (activeChatId === message.sender.id || activeChatId === message.sender._id)) {
           setChatMessages((prev) => {
             const exists = prev.some(m => (m._id || m.id).toString() === (message._id || message.id).toString());
             if (exists) return prev;
@@ -363,7 +382,7 @@ export function AppProvider({ children }) {
           socketInstance.emit('markSeen', {
             conversationId: message.conversation,
             senderId: message.sender.id || message.sender._id,
-            receiverId: state.user.id || state.user._id
+            receiverId: currentUser.id || currentUser._id
           });
         } else {
           // Increment notifications/alert
@@ -374,8 +393,9 @@ export function AppProvider({ children }) {
       });
 
       socketInstance.on('messageSent', (message) => {
-        const activeChatId = activeChat?.id || activeChat?._id;
-        if (activeChat && (activeChatId === message.receiver.id || activeChatId === message.receiver._id)) {
+        const currentActiveChat = activeChatRef.current;
+        const activeChatId = currentActiveChat?.id || currentActiveChat?._id;
+        if (currentActiveChat && (activeChatId === message.receiver.id || activeChatId === message.receiver._id)) {
           setChatMessages((prev) => {
             const exists = prev.some(m => (m._id || m.id).toString() === (message._id || message.id).toString());
             if (exists) return prev;
@@ -394,10 +414,11 @@ export function AppProvider({ children }) {
       });
 
       socketInstance.on('messageEdited', (editedMessage) => {
-        const activeChatId = activeChat?.id || activeChat?._id;
+        const currentActiveChat = activeChatRef.current;
+        const activeChatId = currentActiveChat?.id || currentActiveChat?._id;
         const senderId = editedMessage.sender._id || editedMessage.sender.id || editedMessage.sender;
         const receiverId = editedMessage.receiver._id || editedMessage.receiver.id || editedMessage.receiver;
-        if (activeChat && (activeChatId === senderId || activeChatId === receiverId)) {
+        if (currentActiveChat && (activeChatId === senderId || activeChatId === receiverId)) {
           setChatMessages((prev) =>
             prev.map((m) => (String(m._id || m.id) === String(editedMessage._id || editedMessage.id) ? editedMessage : m))
           );
@@ -420,15 +441,17 @@ export function AppProvider({ children }) {
 
       // Typing feedback
       socketInstance.on('userTyping', ({ senderId }) => {
-        const activeChatId = activeChat?.id || activeChat?._id;
-        if (activeChat && (activeChatId === senderId)) {
+        const currentActiveChat = activeChatRef.current;
+        const activeChatId = currentActiveChat?.id || currentActiveChat?._id;
+        if (currentActiveChat && (activeChatId === senderId)) {
           setTypingFriendId(senderId);
         }
       });
 
       socketInstance.on('userStopTyping', ({ senderId }) => {
-        const activeChatId = activeChat?.id || activeChat?._id;
-        if (activeChat && (activeChatId === senderId)) {
+        const currentActiveChat = activeChatRef.current;
+        const activeChatId = currentActiveChat?.id || currentActiveChat?._id;
+        if (currentActiveChat && (activeChatId === senderId)) {
           setTypingFriendId(null);
         }
       });
@@ -518,7 +541,7 @@ export function AppProvider({ children }) {
         socketInstance.disconnect();
       };
     }
-  }, [state.isAuthenticated, state.user, activeChat]);
+  }, [state.isAuthenticated, state.user?.id, state.user?._id]);
 
   // Load chat messages when activeChat changes
   const closeVerificationCelebration = async () => {

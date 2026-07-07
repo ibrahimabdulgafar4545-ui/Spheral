@@ -262,15 +262,30 @@ export default function ReelsPage() {
     navigator.clipboard.writeText(`${window.location.origin}/reels`).then(() => showToast('success', 'Link copied!'));
   };
 
-  const handleDownload = (reel) => {
-    const url = getAssetUrl(reel.videoUrl);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `reel-${reel.id || reel._id}.mp4`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    showToast('success', 'Download started');
+  const handleDownload = async (reel) => {
+    try {
+      showToast('info', 'Downloading video, please wait...');
+      const url = getAssetUrl(reel.videoUrl);
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('Network response was not ok');
+      const blob = await response.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `reel-${reel.id || reel._id}.mp4`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(blobUrl);
+      
+      showToast('success', 'Download complete!');
+    } catch (err) {
+      console.error('Download error:', err);
+      // Fallback: Open in new tab
+      window.open(getAssetUrl(reel.videoUrl), '_blank');
+      showToast('info', 'Opened video in a new tab.');
+    }
   };
 
   // ── Comments ─────────────────────────────────────────────────────────────────

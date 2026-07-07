@@ -33,11 +33,16 @@ export default function LiveStreamPage() {
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [savingReel, setSavingReel] = useState(false);
 
+  // Live Dual WebRTC States
+  const [localStream, setLocalStream] = useState(null);
+  const [remoteStream, setRemoteStream] = useState(null);
+
   // References
   const localStreamRef = useRef(null);
   const peerConnections = useRef({}); // Map of viewerId -> RTCPeerConnection (or 'host' for viewers)
   const messagesEndRef = useRef(null);
-  const videoRef = useRef(null);
+  const localVideoRef = useRef(null);
+  const remoteVideoRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
 
@@ -45,6 +50,20 @@ export default function LiveStreamPage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Bind local stream
+  useEffect(() => {
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = localStream;
+    }
+  }, [localStream, remoteStream]); // trigger when co-host joins and refs change
+
+  // Bind remote stream
+  useEffect(() => {
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = remoteStream;
+    }
+  }, [remoteStream]);
 
   // Connect to Socket Room & Init WebRTC
   useEffect(() => {
@@ -54,9 +73,7 @@ export default function LiveStreamPage() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         localStreamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-        }
+        setLocalStream(stream);
 
         // Start recording
         const options = { mimeType: 'video/webm;codecs=vp8,opus' };
@@ -78,7 +95,6 @@ export default function LiveStreamPage() {
       } catch (err) {
         console.warn('Camera/Mic error:', err);
         showToast('error', 'Could not access camera or microphone.');
-        // Allow audio-only or completely empty stream if permissions denied
       }
 
       if (socket && active) {
@@ -100,18 +116,25 @@ export default function LiveStreamPage() {
           userAvatar: user.avatar
         });
 
-        // 3. Handle incoming viewers
+        // 3. Handle incoming viewers (guests)
         socket.on('hostInitiateWebrtc', async ({ viewerId }) => {
           if (!active) return;
           const pc = new RTCPeerConnection(ICE_SERVERS);
           peerConnections.current[viewerId] = pc;
 
-          // Add local tracks
+          // Add local tracks (Host stream)
           if (localStreamRef.current) {
             localStreamRef.current.getTracks().forEach(track => {
               pc.addTrack(track, localStreamRef.current);
             });
           }
+
+          // Receive guest (viewer) stream
+          pc.ontrack = (event) => {
+            if (event.streams && event.streams[0]) {
+              setRemoteStream(event.streams[0]);
+            }
+          };
 
           pc.onicecandidate = (event) => {
             if (event.candidate) {
@@ -141,8 +164,18 @@ export default function LiveStreamPage() {
       }
     };
 
-    const startViewer = () => {
+    const startViewer = async () => {
       if (socket && active) {
+        // Initialize viewer (guest) camera stream too for TikTok split live
+        let vStream = null;
+        try {
+          vStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          localStreamRef.current = vStream;
+          setLocalStream(vStream);
+        } catch (err) {
+          console.warn('Viewer camera denied or not available, viewing only', err);
+        }
+
         socket.emit('joinLive', {
           channelName,
           userId: user.id || user._id,
@@ -151,16 +184,23 @@ export default function LiveStreamPage() {
         });
 
         // Trigger host to create an offer for us
-        // channelName is essentially the hostId in our URL scheme
         const hostId = channelName.replace('live_user_', ''); 
         socket.emit('viewerJoinedLive', { channelName, viewerId: user.id || user._id });
 
         let pc = new RTCPeerConnection(ICE_SERVERS);
         peerConnections.current['host'] = pc;
 
+        // Add local viewer tracks to PeerConnection so host gets our stream as guest
+        if (vStream) {
+          vStream.getTracks().forEach(track => {
+            pc.addTrack(track, vStream);
+          });
+        }
+
+        // Receive host stream
         pc.ontrack = (event) => {
-          if (videoRef.current && event.streams[0]) {
-            videoRef.current.srcObject = event.streams[0];
+          if (event.streams && event.streams[0]) {
+            setRemoteStream(event.streams[0]);
           }
         };
 
@@ -328,14 +368,46 @@ export default function LiveStreamPage() {
     <div className="fixed inset-0 z-[9999] bg-black flex flex-col md:flex-row select-none">
       {/* ─── Main Video Stream Panel ───────────────────────────── */}
       <div className="relative flex-1 bg-zinc-950 flex items-center justify-center overflow-hidden">
-        {/* Render Native Video */}
-        <video 
-          ref={videoRef}
-          autoPlay 
-          playsInline
-          muted={isHost} // Host must be muted locally to prevent echo
-          className="w-full h-full bg-zinc-950 object-cover" 
-        />
+        {/* Render split streams if co-host is active, otherwise render full screen */}
+        {remoteStream ? (
+          <div className="w-full h-full flex flex-col sm:flex-row">
+            {/* Top/Left Frame: Host Stream */}
+            <div className="flex-1 relative bg-black border-b sm:border-b-0 sm:border-r border-sp-border/30">
+              <video
+                ref={isHost ? localVideoRef : remoteVideoRef}
+                autoPlay
+                playsInline
+                muted={isHost}
+                className="w-full h-full object-cover"
+              />
+              <span className="absolute bottom-2 left-2 px-2.5 py-1 rounded bg-black/60 text-white text-[10px] font-bold">
+                {isHost ? 'You (Host)' : 'Host'}
+              </span>
+            </div>
+            {/* Bottom/Right Frame: Guest Stream */}
+            <div className="flex-1 relative bg-black">
+              <video
+                ref={isHost ? remoteVideoRef : localVideoRef}
+                autoPlay
+                playsInline
+                muted={!isHost}
+                className="w-full h-full object-cover"
+              />
+              <span className="absolute bottom-2 left-2 px-2.5 py-1 rounded bg-black/60 text-white text-[10px] font-bold">
+                {isHost ? 'Guest' : 'You (Guest)'}
+              </span>
+            </div>
+          </div>
+        ) : (
+          /* Single Stream (Host only) */
+          <video 
+            ref={isHost ? localVideoRef : remoteVideoRef}
+            autoPlay 
+            playsInline
+            muted={isHost} // Host must be muted locally to prevent echo
+            className="w-full h-full bg-zinc-950 object-cover" 
+          />
+        )}
 
         {/* Live Top Banner Overlay */}
         <div className="absolute top-4 left-4 right-4 flex items-center justify-between z-10 pointer-events-none">

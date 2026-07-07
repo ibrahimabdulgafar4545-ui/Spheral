@@ -198,12 +198,9 @@ router.post('/', protect, uploadMessageFile, async (req, res, next) => {
 
         io.to(recipientSocketId).emit('receiveMessage', populatedMessage);
       }
-      
-      // Also emit back to sender's other tabs if any
-      const senderSocketId = onlineUsers.get(myId);
-      if (senderSocketId) {
-        io.to(senderSocketId).emit('messageSent', populatedMessage);
-      }
+      // NOTE: We do NOT emit 'messageSent' back to the sender here.
+      // The sender's UI already adds the message from the API response in sendMessage().
+      // Emitting it again via socket would add a duplicate, causing the message to blink/flash.
     }
 
     // ── Create notification for recipient (if they have messages alerts on) ──

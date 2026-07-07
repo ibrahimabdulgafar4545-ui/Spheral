@@ -126,9 +126,21 @@ const initSocket = (server) => {
 
     // ─── Live Streaming Socket Events ──────────────────────────────────────────
     socket.on('goLive', async ({ hostId, hostName, hostAvatar, channelName, friends }) => {
+      let notifyList = friends;
+      if (!notifyList || !Array.isArray(notifyList) || notifyList.length === 0) {
+        try {
+          const hostUser = await User.findById(hostId).select('friends');
+          if (hostUser && hostUser.friends) {
+            notifyList = hostUser.friends.map(id => id.toString());
+          }
+        } catch (dbErr) {
+          console.error('Failed to get host friends for live notify:', dbErr);
+        }
+      }
+
       // 1. Notify friends who are online
-      if (friends && Array.isArray(friends)) {
-        friends.forEach(friendId => {
+      if (notifyList && Array.isArray(notifyList)) {
+        notifyList.forEach(friendId => {
           const friendSocketId = onlineUsers.get(friendId);
           if (friendSocketId) {
             io.to(friendSocketId).emit('friendWentLive', {
@@ -144,8 +156,8 @@ const initSocket = (server) => {
       // 2. Save Notification in DB
       try {
         const Notification = require('../models/Notification');
-        if (friends && Array.isArray(friends)) {
-          const notifPromises = friends.map(friendId => 
+        if (notifyList && Array.isArray(notifyList)) {
+          const notifPromises = notifyList.map(friendId => 
             Notification.create({
               recipient: friendId,
               actor: hostId,
