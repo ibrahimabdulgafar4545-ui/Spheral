@@ -116,5 +116,5 @@ module.exports = {
   uploadMessageFile: upload.single('file'),
   uploadVideo: uploadVideoMulter.single('video'),
   uploadStoryCreative: upload.fields([{ name: 'image', maxCount: 1 }, { name: 'customAudio', maxCount: 1 }]),
-  uploadReelCreative: multer({ storage: storage, fileFilter: (req, file, cb) => cb(null, true), limits: { fileSize: 200 * 1024 * 1024 } }).fields([{ name: 'video', maxCount: 1 }, { name: 'customAudio', maxCount: 1 }])
+  uploadReelCreative: multer({ storage: useCloudinary ? cloudStorage : videoLocalStorage, fileFilter: (req, file, cb) => cb(null, true), limits: { fileSize: 200 * 1024 * 1024 } }).fields([{ name: 'video', maxCount: 1 }, { name: 'customAudio', maxCount: 1 }])
 };
