@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { FiPhone, FiPhoneOff, FiVideo, FiVideoOff, FiMic, FiMicOff, FiVolume2 } from 'react-icons/fi';
+import { FiPhone, FiPhoneOff, FiVideo, FiVideoOff, FiMic, FiMicOff, FiVolume2, FiCameraOff } from 'react-icons/fi';
 import AgoraRTC from 'agora-rtc-sdk-ng';
 import Avatar from '../ui/Avatar';
 
