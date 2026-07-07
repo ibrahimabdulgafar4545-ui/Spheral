@@ -16,6 +16,7 @@ import { usersAPI } from '../../api/users';
 import UserDisplay from '../ui/UserDisplay';
 
 import ReactionPicker from '../ui/ReactionPicker';
+import CommentSection from './CommentSection';
 import { getReactionIcon } from '../ui/ReactionIcons';
 
 // Keep REACTIONS for icon rendering, but ReactionPicker handles UI

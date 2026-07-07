@@ -90,27 +90,28 @@ router.put('/:id/react', protect, async (req, res, next) => {
     const reel = await Reel.findById(req.params.id);
     if (!reel) return res.status(404).json({ success: false, message: 'Reel not found' });
 
-    const { reaction } = req.body; // e.g., 'like', 'love', ...
+    const { reaction, type } = req.body; // client sends 'type', older code sends 'reaction'
+    const reactionType = type || reaction;
     const userId = req.user.id.toString();
     const existing = reel.reactions.find(r => r.user.toString() === userId);
 
     if (existing) {
-      if (existing.type === reaction) {
+      if (existing.type === reactionType) {
         // toggle off
         reel.reactions = reel.reactions.filter(r => r.user.toString() !== userId);
       } else {
         // change reaction type
-        existing.type = reaction;
+        existing.type = reactionType;
       }
     } else {
-      reel.reactions.push({ user: userId, type: reaction });
+      reel.reactions.push({ user: userId, type: reactionType });
       if (reel.author.toString() !== userId) {
         await Notification.create({
           recipient: reel.author,
           actor: req.user.id,
           type: 'reaction',
           post: reel._id,
-          content: `reacted ${reaction} to your reel`,
+          content: `reacted ${reactionType} to your reel`,
         });
 
         // Socket notify
@@ -120,7 +121,7 @@ router.put('/:id/react', protect, async (req, res, next) => {
           const targetSocketId = onlineUsers.get(reel.author.toString());
           if (targetSocketId) {
             io.to(targetSocketId).emit('newNotificationNotify', {
-              message: `${req.user.name} reacted ${reaction} to your reel`
+              message: `${req.user.name} reacted ${reactionType} to your reel`
             });
           }
         }

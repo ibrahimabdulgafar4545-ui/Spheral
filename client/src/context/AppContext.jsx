@@ -533,32 +533,34 @@ export function AppProvider({ children }) {
       console.error('Failed to acknowledge verification:', err);
     }
   };
+  const activeChatFriendId = activeChat?._id || activeChat?.id || null;
+
   useEffect(() => {
-    if (activeChat) {
-      const loadMessages = async () => {
-        try {
-          const friendId = activeChat._id || activeChat.id;
-          const res = await messagesAPI.getMessages(friendId);
-          if (res.success) {
-            setChatMessages(res.messages);
-            if (socket) {
-              socket.emit('markSeen', {
-                conversationId: res.conversationId,
-                senderId: friendId,
-                receiverId: state.user.id || state.user._id
-              });
-            }
-            loadUnreadMessageCount();
+    // Clear stale messages IMMEDIATELY when switching to a different person
+    setChatMessages([]);
+
+    if (!activeChatFriendId) return;
+
+    const loadMessages = async () => {
+      try {
+        const res = await messagesAPI.getMessages(activeChatFriendId);
+        if (res.success) {
+          setChatMessages(res.messages);
+          if (socket) {
+            socket.emit('markSeen', {
+              conversationId: res.conversationId,
+              senderId: activeChatFriendId,
+              receiverId: state.user.id || state.user._id
+            });
           }
-        } catch (err) {
-          console.error('Error loading chat:', err);
+          loadUnreadMessageCount();
         }
-      };
-      loadMessages();
-    } else {
-      setChatMessages([]);
-    }
-  }, [activeChat, socket]);
+      } catch (err) {
+        console.error('Error loading chat:', err);
+      }
+    };
+    loadMessages();
+  }, [activeChatFriendId, socket]);
 
   // API Call actions
   const login = async (credentials) => {
