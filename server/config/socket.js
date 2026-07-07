@@ -24,9 +24,20 @@ const initSocket = (server) => {
 
       // Set online status in DB
       try {
-        await User.findByIdAndUpdate(userId, { isOnline: true });
-        // Broadcast user status changed
-        io.emit('userStatusChanged', { userId, isOnline: true });
+        const user = await User.findByIdAndUpdate(userId, { isOnline: true }, { new: true });
+        
+        // Broadcast user status changed ONLY to non-blocked relationships
+        const usersWhoBlockedMe = await User.find({ blockedUsers: userId }).select('_id');
+        const excludedIds = [
+          ...(user.blockedUsers || []).map(id => id.toString()),
+          ...usersWhoBlockedMe.map(u => u._id.toString())
+        ];
+
+        for (let [otherUserId, otherSocketId] of onlineUsers.entries()) {
+          if (!excludedIds.includes(otherUserId) && otherUserId !== userId) {
+            io.to(otherSocketId).emit('userStatusChanged', { userId, isOnline: true });
+          }
+        }
       } catch (err) {
         console.error('Error setting user online:', err);
       }
@@ -50,6 +61,12 @@ const initSocket = (server) => {
     // Mark messages as read/seen
     socket.on('markSeen', async ({ conversationId, senderId, receiverId }) => {
       try {
+        const receiver = await User.findById(receiverId).select('blockedUsers');
+        if (receiver && receiver.blockedUsers && receiver.blockedUsers.includes(senderId)) {
+          // WhatsApp behavior: if receiver blocks sender, read receipts are permanently suppressed
+          return;
+        }
+
         await Message.updateMany(
           { conversation: conversationId, sender: senderId, status: { $ne: 'seen' } },
           { $set: { status: 'seen' } }
@@ -232,8 +249,20 @@ const initSocket = (server) => {
       if (socket.userId) {
         onlineUsers.delete(socket.userId);
         try {
-          await User.findByIdAndUpdate(socket.userId, { isOnline: false, lastSeen: new Date() });
-          io.emit('userStatusChanged', { userId: socket.userId, isOnline: false, lastSeen: new Date() });
+          const user = await User.findByIdAndUpdate(socket.userId, { isOnline: false, lastSeen: new Date() }, { new: true });
+          if (user) {
+            const usersWhoBlockedMe = await User.find({ blockedUsers: socket.userId }).select('_id');
+            const excludedIds = [
+              ...(user.blockedUsers || []).map(id => id.toString()),
+              ...usersWhoBlockedMe.map(u => u._id.toString())
+            ];
+            
+            for (let [otherUserId, otherSocketId] of onlineUsers.entries()) {
+              if (!excludedIds.includes(otherUserId) && otherUserId !== socket.userId) {
+                io.to(otherSocketId).emit('userStatusChanged', { userId: socket.userId, isOnline: false, lastSeen: user.lastSeen });
+              }
+            }
+          }
         } catch (err) {
           console.error('Error setting user online/offline status:', err);
         }

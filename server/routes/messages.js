@@ -28,9 +28,24 @@ router.get('/conversations', protect, async (req, res, next) => {
       })
       .sort({ updatedAt: -1 });
 
+    const me = await User.findById(myId).select('blockedUsers');
+    const myBlocked = (me.blockedUsers || []).map(id => id.toString());
+    const usersWhoBlockedMe = await User.find({ blockedUsers: myId }).select('_id');
+    const blockedMe = usersWhoBlockedMe.map(u => u._id.toString());
+    const excludedIds = [...myBlocked, ...blockedMe];
+
     // Format response to identify friend details easily
     const formatted = conversations.map((conv) => {
-      const friend = conv.participants.find((p) => p.id !== myId && p._id.toString() !== myId);
+      let friendDoc = conv.participants.find((p) => p.id !== myId && p._id.toString() !== myId);
+      let friend = null;
+      if (friendDoc) {
+        friend = friendDoc.toObject ? friendDoc.toObject() : { ...friendDoc };
+        // Hide online status if there's a block in either direction
+        if (excludedIds.includes(friend._id.toString())) {
+          friend.isOnline = false;
+          friend.lastSeen = null;
+        }
+      }
       return {
         id: conv._id,
         friend,
