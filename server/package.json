@@ -23,7 +23,7 @@
     "helmet": "^7.1.0",
     "express-rate-limit": "^7.2.0",
     "socket.io": "^4.7.5",
-    "cloudinary": "^2.0.1",
+    "cloudinary": "^1.41.3",
     "multer-storage-cloudinary": "^4.0.0"
   },
   "devDependencies": {
