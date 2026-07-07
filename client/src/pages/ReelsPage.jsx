@@ -453,7 +453,7 @@ export default function ReelsPage() {
               />
             ))}
           </div>
-        ) : (
+          )) : (
           /* Tab: Live Discovery Grid */
           <div className="flex-1 overflow-y-auto p-4 pt-16 bg-zinc-950 text-white flex flex-col no-scroll">
             <h2 className="text-base font-bold mb-4 flex items-center gap-2">

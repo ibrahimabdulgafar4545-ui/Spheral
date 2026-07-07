@@ -1199,7 +1199,6 @@ export function AppProvider({ children }) {
       switchAccount,
       saveAccountSession,
       removeAccountSession,
-      showToast,
       
       // Socket, calling & DMs
       socket,
