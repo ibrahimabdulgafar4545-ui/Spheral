@@ -125,6 +125,28 @@ const initSocket = (server) => {
       }
     });
 
+    // Direct WebRTC 1-to-1 Calling signaling relays
+    socket.on('callOffer', ({ targetId, offer }) => {
+      const recipientSocketId = onlineUsers.get(targetId);
+      if (recipientSocketId) {
+        io.to(recipientSocketId).emit('receiveCallOffer', { offer, senderId: socket.userId });
+      }
+    });
+
+    socket.on('callAnswer', ({ targetId, answer }) => {
+      const recipientSocketId = onlineUsers.get(targetId);
+      if (recipientSocketId) {
+        io.to(recipientSocketId).emit('receiveCallAnswer', { answer, senderId: socket.userId });
+      }
+    });
+
+    socket.on('callIceCandidate', ({ targetId, candidate }) => {
+      const recipientSocketId = onlineUsers.get(targetId);
+      if (recipientSocketId) {
+        io.to(recipientSocketId).emit('receiveCallIceCandidate', { candidate, senderId: socket.userId });
+      }
+    });
+
     // ─── Live Streaming Socket Events ──────────────────────────────────────────
     socket.on('goLive', async ({ hostId, hostName, hostAvatar, channelName, friends }) => {
       activeLiveStreams.set(channelName, {

@@ -1,12 +1,8 @@
 import { useEffect, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { FiPhone, FiPhoneOff, FiVideo, FiVideoOff, FiMic, FiMicOff, FiVolume2, FiCameraOff } from 'react-icons/fi';
-import AgoraRTC from 'agora-rtc-sdk-ng';
 import Avatar from '../ui/Avatar';
-import { messagesAPI } from '../../api/messages';
-
-// Use environment variable or default temporary App ID
-const AGORA_APP_ID = import.meta.env.VITE_AGORA_APP_ID || '109f352202884564ab396c732df1364e'; 
+import { useApp } from '../../context/AppContext';
 
 class ToneGenerator {
   constructor() {
@@ -61,7 +57,7 @@ class ToneGenerator {
 
     try {
       playRing();
-      this.intervalId = setInterval(playRing, 6000);
+      this.intervalId = setInterval(playRing, 3000);
     } catch (e) {
       console.warn('ToneGenerator failed to start:', e);
     }
@@ -86,8 +82,8 @@ class ToneGenerator {
       osc2.frequency.value = 450;
 
       gain.gain.setValueAtTime(0, this.ctx.currentTime);
-      gain.gain.linearRampToValueAtTime(0.1, this.ctx.currentTime + 0.1);
-      gain.gain.setValueAtTime(0.1, this.ctx.currentTime + 1.2);
+      gain.gain.linearRampToValueAtTime(0.15, this.ctx.currentTime + 0.1);
+      gain.gain.setValueAtTime(0.15, this.ctx.currentTime + 1.2);
       gain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 1.3);
 
       osc1.connect(gain);
@@ -131,23 +127,19 @@ class ToneGenerator {
 const toneGenerator = new ToneGenerator();
 
 export default function CallOverlay({ callData, callState, onAccept, onDecline, onEnd, currentUser }) {
+  const { socket } = useApp();
   const [muted, setMuted] = useState(false);
   const [videoOff, setVideoOff] = useState(!callData?.video);
   const [cameraError, setCameraError] = useState(false);
   const [duration, setDuration] = useState(0);
   const timerRef = useRef(null);
 
-  // Agora refs
-  const agoraClientRef = useRef(null);
-  const localAudioTrackRef = useRef(null);
-  const localVideoTrackRef = useRef(null);
-  const [remoteUser, setRemoteUser] = useState(null);
-
-  // Fallback Camera Stream ref (if Agora fails or is mock)
+  // WebRTC refs
+  const peerConnectionRef = useRef(null);
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
+  const remoteAudioRef = useRef(null);
   const localMediaStreamRef = useRef(null);
-  const [isMockCall, setIsMockCall] = useState(false);
 
   // Format call duration
   const formatDuration = (secs) => {
@@ -199,183 +191,177 @@ export default function CallOverlay({ callData, callState, onAccept, onDecline, 
     };
   }, [callState, callData, onEnd]);
 
-  // Handle Agora WebRTC Connection
+  // Handle Native WebRTC Connection (P2P Calling without Agora)
   useEffect(() => {
     if (callState !== 'connected') return;
 
     let active = true;
+    const targetPeerId = callData.incoming ? callData.callerId : callData.recipientId;
 
-    const startAgora = async () => {
+    const startWebRTCCall = async () => {
       try {
-        // 1. Initialize Agora client
-        const client = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' });
-        agoraClientRef.current = client;
-
-        // 2. Setup event listeners
-        client.on('user-published', async (user, mediaType) => {
-          await client.subscribe(user, mediaType);
-          if (mediaType === 'video') {
-            setRemoteUser(user);
-            setTimeout(() => {
-              user.videoTrack?.play('remote-video-container');
-            }, 100);
-          }
-          if (mediaType === 'audio') {
-            user.audioTrack?.play();
-          }
+        // 1. Get local user media stream
+        const localStream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: callData.video ? { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } } : false
         });
-
-        client.on('user-unpublished', (user) => {
-          if (user.uid === remoteUser?.uid) {
-            setRemoteUser(null);
-          }
-        });
-
-        // 3. Join the Agora Channel
-        // We fetch a secure RTC token from the backend
-        let token = null;
-        let appIdToUse = AGORA_APP_ID;
-        try {
-          const tokenRes = await messagesAPI.getAgoraToken(callData.channelName);
-          if (tokenRes.success) {
-            token = tokenRes.token;
-            if (tokenRes.appId) appIdToUse = tokenRes.appId;
-          }
-        } catch (tokenErr) {
-          console.warn('Failed to fetch Agora token, falling back to insecure channel join', tokenErr);
-        }
-
-        await client.join(appIdToUse, callData.channelName, token, 0);
-
-        // 4. Create and publish local tracks individually
-        const tracks = [];
-        try {
-          localAudioTrackRef.current = await AgoraRTC.createMicrophoneAudioTrack();
-          tracks.push(localAudioTrackRef.current);
-        } catch (audioErr) {
-          console.error('Microphone access denied or not found', audioErr);
-        }
-
-        if (callData.video && !videoOff) {
-          try {
-            localVideoTrackRef.current = await AgoraRTC.createCameraVideoTrack();
-            tracks.push(localVideoTrackRef.current);
-            setTimeout(() => {
-              localVideoTrackRef.current?.play('local-video-container');
-            }, 100);
-          } catch (videoErr) {
-            console.error('Camera access denied or not found', videoErr);
-            setCameraError(true);
-            setVideoOff(true);
-          }
-        }
-
-        if (active && tracks.length > 0) {
-          await client.publish(tracks);
-          console.log('Agora RTC channel published successfully!');
-        }
-      } catch (err) {
-        console.warn('Agora connection failed. Falling back to Mock local WebRTC preview.', err);
-        if (active) {
-          setupMockCall();
-        }
-      }
-    };
-
-    const setupMockCall = async () => {
-      setIsMockCall(true);
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: callData.video,
-          audio: true
-        });
-        localMediaStreamRef.current = stream;
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
-        }
         
-        // Mock remote camera preview (using local stream as simulated remote feedback)
-        setTimeout(() => {
-          if (remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = stream;
+        if (!active) {
+          localStream.getTracks().forEach(track => track.stop());
+          return;
+        }
+
+        localMediaStreamRef.current = localStream;
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = localStream;
+        }
+
+        // 2. Instantiate RTCPeerConnection with public STUN servers
+        const pc = new RTCPeerConnection({
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' }
+          ]
+        });
+        peerConnectionRef.current = pc;
+
+        // 3. Add local tracks to PeerConnection
+        localStream.getTracks().forEach(track => {
+          pc.addTrack(track, localStream);
+        });
+
+        // 4. Handle remote track connection
+        pc.ontrack = (event) => {
+          console.log('Native WebRTC remote track added:', event.streams[0]);
+          if (callData.video) {
+            if (remoteVideoRef.current && event.streams[0]) {
+              remoteVideoRef.current.srcObject = event.streams[0];
+            }
+          } else {
+            if (remoteAudioRef.current && event.streams[0]) {
+              remoteAudioRef.current.srcObject = event.streams[0];
+            }
           }
-        }, 1500);
+        };
+
+        // 5. Handle ICE Candidates
+        pc.onicecandidate = (event) => {
+          if (event.candidate && socket) {
+            socket.emit('callIceCandidate', {
+              targetId: targetPeerId,
+              candidate: event.candidate
+            });
+          }
+        };
+
+        // 6. Socket listeners for WebRTC signaling
+        socket.on('receiveCallOffer', async ({ offer, senderId }) => {
+          if (String(senderId) !== String(targetPeerId)) return;
+          try {
+            console.log('WebRTC received offer from:', senderId);
+            await pc.setRemoteDescription(new RTCSessionDescription(offer));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            socket.emit('callAnswer', {
+              targetId: targetPeerId,
+              answer: answer
+            });
+          } catch (e) {
+            console.error('Error handling WebRTC offer:', e);
+          }
+        });
+
+        socket.on('receiveCallAnswer', async ({ answer, senderId }) => {
+          if (String(senderId) !== String(targetPeerId)) return;
+          try {
+            console.log('WebRTC received answer from:', senderId);
+            await pc.setRemoteDescription(new RTCSessionDescription(answer));
+          } catch (e) {
+            console.error('Error handling WebRTC answer:', e);
+          }
+        });
+
+        socket.on('receiveCallIceCandidate', async ({ candidate, senderId }) => {
+          if (String(senderId) !== String(targetPeerId)) return;
+          try {
+            if (candidate) {
+              await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            }
+          } catch (e) {
+            console.error('Error adding WebRTC ICE candidate:', e);
+          }
+        });
+
+        // 7. Caller generates the initial WebRTC Offer
+        if (!callData.incoming) {
+          console.log('Caller initiating WebRTC call offer to:', targetPeerId);
+          // Small delay to let receiver set up their connection
+          setTimeout(async () => {
+            try {
+              const offer = await pc.createOffer();
+              await pc.setLocalDescription(offer);
+              socket.emit('callOffer', {
+                targetId: targetPeerId,
+                offer: offer
+              });
+            } catch (offerErr) {
+              console.error('Error creating WebRTC offer:', offerErr);
+            }
+          }, 800);
+        }
+
       } catch (err) {
-        console.error('Camera access denied:', err);
+        console.error('Native WebRTC call initialization failed:', err);
+        setCameraError(true);
+        setVideoOff(true);
       }
     };
 
-    startAgora();
+    startWebRTCCall();
 
-    // Cleanup on EndCall
     return () => {
       active = false;
-      cleanupAgora();
+      cleanupWebRTCCall();
     };
   }, [callState]);
 
-  // Bind media stream to video elements once they are rendered in DOM
-  useEffect(() => {
-    if (isMockCall && localMediaStreamRef.current) {
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = localMediaStreamRef.current;
-      }
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = localMediaStreamRef.current;
-      }
-    }
-  }, [isMockCall, callState, videoOff]);
-
-  const cleanupAgora = async () => {
-    // Agora Tracks cleanup
-    try {
-      localAudioTrackRef.current?.stop();
-      localAudioTrackRef.current?.close();
-      localVideoTrackRef.current?.stop();
-      localVideoTrackRef.current?.close();
-    } catch (e) {
-      console.error(e);
-    }
-
-    try {
-      if (agoraClientRef.current) {
-        await agoraClientRef.current.leave();
-      }
-    } catch (e) {
-      console.error(e);
-    }
-
-    // Mock stream cleanup
+  const cleanupWebRTCCall = () => {
+    // Stop local media tracks
     if (localMediaStreamRef.current) {
       localMediaStreamRef.current.getTracks().forEach(track => track.stop());
+      localMediaStreamRef.current = null;
+    }
+    // Close PeerConnection
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+    }
+    // Remove Socket listeners
+    if (socket) {
+      socket.off('receiveCallOffer');
+      socket.off('receiveCallAnswer');
+      socket.off('receiveCallIceCandidate');
     }
   };
 
   const toggleMute = () => {
     const nextState = !muted;
     setMuted(nextState);
-    if (isMockCall) {
-      if (localMediaStreamRef.current) {
-        localMediaStreamRef.current.getAudioTracks().forEach(track => {
-          track.enabled = !nextState;
-        });
-      }
-    } else {
-      localAudioTrackRef.current?.setEnabled(!nextState);
+    if (localMediaStreamRef.current) {
+      localMediaStreamRef.current.getAudioTracks().forEach(track => {
+        track.enabled = !nextState;
+      });
     }
   };
 
   const toggleVideo = () => {
     const nextState = !videoOff;
     setVideoOff(nextState);
-    if (isMockCall) {
-      if (localMediaStreamRef.current) {
-        localMediaStreamRef.current.getVideoTracks().forEach(track => {
-          track.enabled = !nextState;
-        });
-      }
-    } else {
-      localVideoTrackRef.current?.setEnabled(!nextState);
+    if (localMediaStreamRef.current) {
+      localMediaStreamRef.current.getVideoTracks().forEach(track => {
+        track.enabled = !nextState;
+      });
     }
   };
 
@@ -404,8 +390,8 @@ export default function CallOverlay({ callData, callState, onAccept, onDecline, 
         </div>
 
         {callState === 'connected' && (
-          <div className="px-3 py-1 bg-white/10 rounded-full text-xs font-semibold backdrop-blur-sm">
-            {isMockCall ? 'Mock WebRTC Connection' : 'Agora RTC Room Connected'}
+          <div className="px-3 py-1 bg-gradient-to-r from-sp-blue to-purple-600 rounded-full text-xs font-semibold backdrop-blur-sm animate-pulse">
+            Secure WebRTC Connection
           </div>
         )}
       </div>
@@ -426,51 +412,44 @@ export default function CallOverlay({ callData, callState, onAccept, onDecline, 
           </div>
         ) : (
           /* Connected State: Render Streams */
-          <div className="relative w-full h-full">
-            {/* Remote Stream Container */}
+          <div className="relative w-full h-full flex items-center justify-center bg-black">
+            {/* Remote Video Stream */}
             {callData.video && (
-              <div className="w-full h-full flex items-center justify-center">
-                {isMockCall ? (
-                  <video
-                    ref={remoteVideoRef}
-                    autoPlay
-                    playsInline
-                    className="w-full h-full object-cover transform -scale-x-100"
-                  />
-                ) : (
-                  <div id="remote-video-container" className="w-full h-full bg-black" />
-                )}
-                {/* Overlay for Mock OR Missing Camera */}
-                {(isMockCall || cameraError || (!localVideoTrackRef.current && videoOff)) && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 rounded-xl">
-                    <FiCameraOff size={32} className="text-white/50 mb-2" />
+              <div className="w-full h-full flex items-center justify-center bg-black relative">
+                <video
+                  ref={remoteVideoRef}
+                  autoPlay
+                  playsInline
+                  className="w-full h-full object-cover"
+                />
+                
+                {/* Overlay for Remote Camera Off */}
+                {videoOff && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80">
+                    <FiCameraOff size={32} className="text-white/50 mb-2 animate-pulse" />
                     <span className="text-white/70 text-sm font-medium">
-                      {cameraError ? 'Camera Unavailable' : 'Camera Off'}
+                      Camera Off
                     </span>
-                  </div>
-                )}
-                {(!isMockCall && !remoteUser) && (
-                  <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400">
-                    Waiting for user to share camera...
                   </div>
                 )}
               </div>
             )}
 
+            {/* Hidden audio element to play incoming audio during audio-only calls */}
+            {!callData.video && (
+              <audio ref={remoteAudioRef} autoPlay playsInline />
+            )}
+
             {/* Local Stream Container (Picture in Picture) */}
             {callData.video && !videoOff && (
               <div className="absolute bottom-4 right-4 w-32 h-44 rounded-xl overflow-hidden border border-white/20 bg-black shadow-card-lg z-10">
-                {isMockCall ? (
-                  <video
-                    ref={localVideoRef}
-                    autoPlay
-                    playsInline
-                    muted
-                    className="w-full h-full object-cover transform -scale-x-100"
-                  />
-                ) : (
-                  <div id="local-video-container" className="w-full h-full" />
-                )}
+                <video
+                  ref={localVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-full object-cover transform -scale-x-100"
+                />
               </div>
             )}
 

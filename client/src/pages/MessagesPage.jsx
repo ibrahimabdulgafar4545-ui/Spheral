@@ -61,7 +61,8 @@ export default function MessagesPage() {
     typingFriendId,
     startCall,
     showToast,
-    loadConversations
+    loadConversations,
+    getLiveChannelForUser
   } = useApp();
 
   const navigate = useNavigate();
@@ -640,9 +641,31 @@ export default function MessagesPage() {
                         </button>
                       </div>
                     )}
-                  </div>
                 </div>
               </div>
+
+              {/* Floating animated join live prompt for active chat friend */}
+              {getLiveChannelForUser && getLiveChannelForUser(activeChatId) && (
+                <div className="mx-4 mt-3 mb-1 bg-gradient-to-r from-pink-500 via-purple-600 to-red-500 rounded-2xl p-[1.5px] shadow-lg animate-pulse pointer-events-auto flex-shrink-0 relative z-30">
+                  <div className="bg-sp-card rounded-[15px] p-3.5 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="relative">
+                        <Avatar src={activeChat.avatar} alt={activeChat.name} size="sm" liveChannel={getLiveChannelForUser(activeChatId)} />
+                      </div>
+                      <div className="text-left">
+                        <p className="text-xs font-black text-sp-text">{activeChat.name} is LIVE now! 🎥</p>
+                        <p className="text-[10px] text-sp-muted">Join the live broadcast to watch or co-host</p>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => navigate(`/live/${getLiveChannelForUser(activeChatId)}`)}
+                      className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold text-[10px] shadow transition active:scale-95 cursor-pointer"
+                    >
+                      Join Live
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Report Modal */}
               {showReportModal && (

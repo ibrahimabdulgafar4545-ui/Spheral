@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   FiX, FiSend, FiMinimize2, FiPaperclip, FiMic, FiPhone, FiVideo,
   FiSmile, FiTrash2, FiPlay, FiSquare, FiThumbsUp, FiStar, FiHeart, FiPlus, FiCpu
@@ -46,10 +47,12 @@ export default function ChatBox() {
     user,
     socket,
     typingFriendId,
-    startCall
+    startCall,
+    getLiveChannelForUser
   } = useApp();
 
   const [text, setText] = useState('');
+  const navigate = useNavigate();
   const [showEmojis, setShowEmojis] = useState(false);
   const [actionsExpanded, setActionsExpanded] = useState(false);
 
@@ -345,6 +348,26 @@ export default function ChatBox() {
 
       {/* Message Area */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-sp-bg/40 no-scroll relative">
+        {/* Floating join live prompt */}
+        {getLiveChannelForUser && getLiveChannelForUser(activeChat._id || activeChat.id) && (
+          <div className="bg-gradient-to-r from-pink-500 via-purple-600 to-red-500 rounded-xl p-[1px] shadow-md animate-pulse mb-3 select-none">
+            <div className="bg-sp-card rounded-[11px] p-2 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-left">
+                <Avatar src={activeChat.avatar} alt={activeChat.name} size="xs" liveChannel={getLiveChannelForUser(activeChat._id || activeChat.id)} />
+                <div>
+                  <p className="text-[10px] font-black text-sp-text leading-tight">{activeChat.name} is LIVE! 🎥</p>
+                  <p className="text-[8px] text-sp-muted">Tap to watch broadcast</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => navigate(`/live/${getLiveChannelForUser(activeChat._id || activeChat.id)}`)}
+                className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold text-[8px] transition active:scale-95 cursor-pointer"
+              >
+                Join
+              </button>
+            </div>
+          </div>
+        )}
         {/* Conversation Start System Message Block */}
         <div className="flex flex-col items-center justify-center text-center p-4 border-b border-sp-divider mb-3 select-none">
           <Avatar src={activeChat.avatar} alt={activeChat.name} size="lg" className="mb-1.5 border border-sp-border shadow" />
