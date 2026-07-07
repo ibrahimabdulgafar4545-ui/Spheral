@@ -1177,6 +1177,9 @@ export function AppProvider({ children }) {
     return stream ? stream.channelName : null;
   };
 
+  const unreadNotifCount = (state.notifications || []).filter(n => !n.read).length;
+  const pendingFriendRequests = (state.friendRequests || []).filter(req => req.status === 'pending').length;
+
   return (
     <AppContext.Provider value={{
       ...state,
