@@ -3,6 +3,7 @@ const User = require('../models/User');
 const Message = require('../models/Message');
 
 const onlineUsers = new Map(); // userId -> socketId
+const activeLiveStreams = new Map(); // channelName -> streamData
 
 const initSocket = (server) => {
   const io = socketio(server, {
@@ -126,6 +127,15 @@ const initSocket = (server) => {
 
     // ─── Live Streaming Socket Events ──────────────────────────────────────────
     socket.on('goLive', async ({ hostId, hostName, hostAvatar, channelName, friends }) => {
+      activeLiveStreams.set(channelName, {
+        hostId,
+        hostName,
+        hostAvatar,
+        channelName,
+        viewersCount: 1,
+        coHosts: []
+      });
+
       let notifyList = friends;
       if (!notifyList || !Array.isArray(notifyList) || notifyList.length === 0) {
         try {
@@ -177,6 +187,12 @@ const initSocket = (server) => {
       socket.liveChannel = channelName;
       console.log(`📡 User joined live room: live_${channelName}`);
       
+      const stream = activeLiveStreams.get(channelName);
+      if (stream) {
+        stream.viewersCount = (stream.viewersCount || 0) + 1;
+        activeLiveStreams.set(channelName, stream);
+      }
+
       io.to(`live_${channelName}`).emit('liveMessage', {
         id: Math.random().toString(),
         user: { name: userName, avatar: userAvatar },
@@ -194,6 +210,12 @@ const initSocket = (server) => {
       socket.leave(`live_${channelName}`);
       console.log(`📡 User left live room: live_${channelName}`);
       
+      const stream = activeLiveStreams.get(channelName);
+      if (stream) {
+        stream.viewersCount = Math.max(1, (stream.viewersCount || 1) - 1);
+        activeLiveStreams.set(channelName, stream);
+      }
+
       io.to(`live_${channelName}`).emit('liveMessage', {
         id: Math.random().toString(),
         user: { name: userName },
@@ -218,8 +240,42 @@ const initSocket = (server) => {
     });
 
     socket.on('endLiveStream', ({ channelName }) => {
+      activeLiveStreams.delete(channelName);
       io.to(`live_${channelName}`).emit('liveStreamEnded');
       io.emit('friendEndedLive', { channelName });
+    });
+
+    // ─── Co-Host Request Signaling ───────────────────────────────────────────
+    socket.on('requestCoHost', ({ channelName, userId, userName, userAvatar }) => {
+      const hostId = channelName.replace('live_user_', '');
+      const hostSocketId = onlineUsers.get(hostId);
+      if (hostSocketId) {
+        io.to(hostSocketId).emit('coHostRequestReceived', { userId, userName, userAvatar });
+      }
+    });
+
+    socket.on('approveCoHost', ({ channelName, viewerId }) => {
+      const viewerSocketId = onlineUsers.get(viewerId);
+      if (viewerSocketId) {
+        io.to(viewerSocketId).emit('coHostRequestApproved', { channelName });
+      }
+    });
+
+    socket.on('declineCoHost', ({ channelName, viewerId }) => {
+      const viewerSocketId = onlineUsers.get(viewerId);
+      if (viewerSocketId) {
+        io.to(viewerSocketId).emit('coHostRequestDeclined', { channelName });
+      }
+    });
+    socket.on('muteUser', ({ channelName, userId }) => {
+      io.to(`live_${channelName}`).emit('userMuted', { userId });
+    });
+
+    socket.on('kickUser', ({ channelName, userId }) => {
+      const viewerSocketId = onlineUsers.get(userId);
+      if (viewerSocketId) {
+        io.to(viewerSocketId).emit('kickedByHost', { channelName });
+      }
     });
 
     // ─── Native WebRTC Signaling Relays ──────────────────────────────────────
@@ -254,6 +310,18 @@ const initSocket = (server) => {
       console.log(`🔌 Socket disconnected: ${socket.id}`);
       if (socket.liveChannel) {
         socket.leave(`live_${socket.liveChannel}`);
+        const stream = activeLiveStreams.get(socket.liveChannel);
+        if (stream) {
+          // If the disconnect was the host, remove the stream
+          if (stream.hostId.toString() === (socket.userId || '').toString()) {
+            activeLiveStreams.delete(socket.liveChannel);
+            io.to(`live_${socket.liveChannel}`).emit('liveStreamEnded');
+            io.emit('friendEndedLive', { channelName: socket.liveChannel });
+          } else {
+            stream.viewersCount = Math.max(1, (stream.viewersCount || 1) - 1);
+            activeLiveStreams.set(socket.liveChannel, stream);
+          }
+        }
         const clients = io.sockets.adapter.rooms.get(`live_${socket.liveChannel}`);
         const count = clients ? clients.size : 0;
         io.to(`live_${socket.liveChannel}`).emit('liveViewerCount', count);
@@ -285,4 +353,4 @@ const initSocket = (server) => {
   return { io, onlineUsers };
 };
 
-module.exports = { initSocket, onlineUsers };
+module.exports = { initSocket, onlineUsers, activeLiveStreams };

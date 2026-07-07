@@ -151,6 +151,7 @@ app.use('/api/groups', groupRoutes);
 app.use('/api/notifications', notifRoutes);
 app.use('/api/stories', require('./routes/stories'));
 app.use('/api/messages', require('./routes/messages'));
+app.use('/api/calls', require('./routes/calls'));
 app.use('/api/reels', require('./routes/reels'));
 app.use('/api/support', require('./routes/support'));
 app.use('/api/activity', require('./routes/activity'));

@@ -1169,12 +1169,18 @@ export function AppProvider({ children }) {
     setChatOpen(false);
   };
 
-  const unreadNotifCount = state.notifications.filter((n) => !n.read).length;
-  const pendingFriendRequests = state.friendRequests.length;
+  const getLiveChannelForUser = (userId) => {
+    if (!activeLiveStreams || !userId) return null;
+    const stream = activeLiveStreams.find(
+      (s) => String(s.hostId) === String(userId)
+    );
+    return stream ? stream.channelName : null;
+  };
 
   return (
     <AppContext.Provider value={{
       ...state,
+      getLiveChannelForUser,
       login, signup, logout,
       sendCode, verifyCode,
       loadFeed, addPost, toggleLike, reactPost, deletePost, archivePost,

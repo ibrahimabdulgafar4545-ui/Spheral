@@ -15,4 +15,6 @@ export const messagesAPI = {
   deleteConversation: (friendId) => api.delete(`/messages/conversations/${friendId}`),
   callAssistant: (prompt, textContext) => api.post('/messages/assistant', { prompt, textContext }),
   reactToMessage: (messageId, reaction) => api.put(`/messages/${messageId}/react`, { reaction }),
+  getAgoraToken: (channelName) => api.get(`/calls/token?channelName=${channelName}`),
+  getActiveStreams: () => api.get('/calls/active'),
 };

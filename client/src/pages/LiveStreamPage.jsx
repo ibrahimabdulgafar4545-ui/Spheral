@@ -33,6 +33,12 @@ export default function LiveStreamPage() {
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [savingReel, setSavingReel] = useState(false);
 
+  // Co-Host Requests & Duration & Moderation States
+  const [coHostStatus, setCoHostStatus] = useState('idle'); // 'idle' | 'requesting' | 'approved' | 'declined'
+  const [pendingRequests, setPendingRequests] = useState([]); // Array of { userId, userName, userAvatar }
+  const [duration, setDuration] = useState(0); // Live duration in seconds
+  const [mutedUsers, setMutedUsers] = useState([]); // Array of muted userIds (chat moderation)
+
   // Live Dual WebRTC States
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
@@ -45,6 +51,35 @@ export default function LiveStreamPage() {
   const remoteVideoRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
+
+  // Live Composite Recording References
+  const audioCtxRef = useRef(null);
+  const audioDestRef = useRef(null);
+  const canvasElementRef = useRef(null);
+  const compositeStreamRef = useRef(null);
+  const drawLoopRef = useRef(null);
+  const remoteAudioSourceRef = useRef(null);
+  const remoteStreamRef = useRef(null);
+
+  // Sync remote stream ref and mix guest audio
+  useEffect(() => {
+    remoteStreamRef.current = remoteStream;
+
+    if (isHost && audioCtxRef.current && audioDestRef.current && remoteStream) {
+      try {
+        if (remoteAudioSourceRef.current) {
+          remoteAudioSourceRef.current.disconnect();
+        }
+        if (remoteStream.getAudioTracks().length > 0) {
+          const source = audioCtxRef.current.createMediaStreamSource(remoteStream);
+          source.connect(audioDestRef.current);
+          remoteAudioSourceRef.current = source;
+        }
+      } catch (audioErr) {
+        console.warn('Failed to route guest audio to recorder:', audioErr);
+      }
+    }
+  }, [remoteStream, isHost]);
 
   // Auto-scroll chat
   useEffect(() => {
@@ -65,6 +100,98 @@ export default function LiveStreamPage() {
     }
   }, [remoteStream]);
 
+  // Live Duration Timer loop
+  useEffect(() => {
+    let interval = null;
+    if (!streamEnded) {
+      interval = setInterval(() => {
+        setDuration(prev => prev + 1);
+      }, 1000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [streamEnded]);
+
+  const formatDuration = (sec) => {
+    const hrs = Math.floor(sec / 3600);
+    const mins = Math.floor((sec % 3600) / 60);
+    const secs = sec % 60;
+    return [
+      hrs > 0 ? String(hrs).padStart(2, '0') : null,
+      String(mins).padStart(2, '0'),
+      String(secs).padStart(2, '0')
+    ].filter(Boolean).join(':');
+  };
+
+  const initCompositeRecording = (hostStream) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 540;
+    canvas.height = 960;
+    canvasElementRef.current = canvas;
+    const ctx = canvas.getContext('2d');
+
+    const localVideo = document.createElement('video');
+    localVideo.srcObject = hostStream;
+    localVideo.muted = true;
+    localVideo.setAttribute('playsinline', 'true');
+    localVideo.play().catch(e => console.warn(e));
+
+    let remoteVideo = null;
+
+    const draw = () => {
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const currentRemoteStream = remoteStreamRef.current;
+      if (currentRemoteStream && currentRemoteStream.getVideoTracks().length > 0) {
+        if (!remoteVideo || remoteVideo.srcObject !== currentRemoteStream) {
+          remoteVideo = document.createElement('video');
+          remoteVideo.srcObject = currentRemoteStream;
+          remoteVideo.muted = true;
+          remoteVideo.setAttribute('playsinline', 'true');
+          remoteVideo.play().catch(e => console.warn(e));
+        }
+      } else {
+        remoteVideo = null;
+      }
+
+      if (remoteVideo && remoteVideo.readyState >= 2) {
+        ctx.drawImage(localVideo, 0, 0, canvas.width, canvas.height / 2);
+        ctx.drawImage(remoteVideo, 0, canvas.height / 2, canvas.width, canvas.height / 2);
+      } else if (localVideo.readyState >= 2) {
+        ctx.drawImage(localVideo, 0, 0, canvas.width, canvas.height);
+      }
+      drawLoopRef.current = requestAnimationFrame(draw);
+    };
+
+    draw();
+
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const audioCtx = new AudioCtx();
+      audioCtxRef.current = audioCtx;
+      const dest = audioCtx.createMediaStreamDestination();
+      audioDestRef.current = dest;
+
+      if (hostStream.getAudioTracks().length > 0) {
+        const localSource = audioCtx.createMediaStreamSource(hostStream);
+        localSource.connect(dest);
+      }
+
+      const canvasStream = canvas.captureStream(30);
+      const composite = new MediaStream();
+      composite.addTrack(canvasStream.getVideoTracks()[0]);
+      if (dest.stream.getAudioTracks().length > 0) {
+        composite.addTrack(dest.stream.getAudioTracks()[0]);
+      }
+      compositeStreamRef.current = composite;
+    } catch (err) {
+      console.warn('AudioContext mixing error, recording video only:', err);
+      compositeStreamRef.current = canvas.captureStream(30);
+    }
+  };
+
   // Connect to Socket Room & Init WebRTC
   useEffect(() => {
     let active = true;
@@ -75,13 +202,17 @@ export default function LiveStreamPage() {
         localStreamRef.current = stream;
         setLocalStream(stream);
 
+        // Initialize composite canvas and audio context
+        initCompositeRecording(stream);
+
         // Start recording
         const options = { mimeType: 'video/webm;codecs=vp8,opus' };
         try {
+          const recStream = compositeStreamRef.current || stream;
           if (MediaRecorder.isTypeSupported(options.mimeType)) {
-            mediaRecorderRef.current = new MediaRecorder(stream, options);
+            mediaRecorderRef.current = new MediaRecorder(recStream, options);
           } else {
-            mediaRecorderRef.current = new MediaRecorder(stream);
+            mediaRecorderRef.current = new MediaRecorder(recStream);
           }
           mediaRecorderRef.current.ondataavailable = (event) => {
             if (event.data.size > 0) {
@@ -155,27 +286,21 @@ export default function LiveStreamPage() {
           }
         });
 
-        socket.on('receiveWebrtcIceCandidate', async ({ senderId, candidate }) => {
-          const pc = peerConnections.current[senderId];
-          if (pc) {
-            await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        // 5. Handle co-host join requests
+        socket.on('coHostRequestReceived', ({ userId, userName, userAvatar }) => {
+          if (active) {
+            setPendingRequests(prev => {
+              if (prev.find(r => r.userId === userId)) return prev;
+              return [...prev, { userId, userName, userAvatar }];
+            });
+            showToast('info', `${userName} requested to join as co-host!`);
           }
         });
       }
     };
 
-    const startViewer = async () => {
+    const startViewer = () => {
       if (socket && active) {
-        // Initialize viewer (guest) camera stream too for TikTok split live
-        let vStream = null;
-        try {
-          vStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-          localStreamRef.current = vStream;
-          setLocalStream(vStream);
-        } catch (err) {
-          console.warn('Viewer camera denied or not available, viewing only', err);
-        }
-
         socket.emit('joinLive', {
           channelName,
           userId: user.id || user._id,
@@ -183,19 +308,12 @@ export default function LiveStreamPage() {
           userAvatar: user.avatar
         });
 
-        // Trigger host to create an offer for us
+        // Trigger host to create an offer for us to watch their stream
         const hostId = channelName.replace('live_user_', ''); 
         socket.emit('viewerJoinedLive', { channelName, viewerId: user.id || user._id });
 
         let pc = new RTCPeerConnection(ICE_SERVERS);
         peerConnections.current['host'] = pc;
-
-        // Add local viewer tracks to PeerConnection so host gets our stream as guest
-        if (vStream) {
-          vStream.getTracks().forEach(track => {
-            pc.addTrack(track, vStream);
-          });
-        }
 
         // Receive host stream
         pc.ontrack = (event) => {
@@ -219,6 +337,55 @@ export default function LiveStreamPage() {
 
         socket.on('receiveWebrtcIceCandidate', async ({ senderId, candidate }) => {
           await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        });
+
+        // Handle co-host approval decisions
+        socket.on('coHostRequestApproved', async () => {
+          if (!active) return;
+          setCoHostStatus('approved');
+          showToast('success', 'Your request to join was approved! Connecting camera...');
+          try {
+            const vStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            localStreamRef.current = vStream;
+            setLocalStream(vStream);
+
+            // Add local guest tracks to existing PeerConnection
+            vStream.getTracks().forEach(track => {
+              pc.addTrack(track, vStream);
+            });
+
+            // Trigger host renegotiation
+            socket.emit('viewerJoinedLive', { channelName, viewerId: user.id || user._id });
+          } catch (err) {
+            console.error('Failed to start guest camera:', err);
+            showToast('error', 'Could not access camera/mic for co-hosting.');
+            setCoHostStatus('idle');
+          }
+        });
+
+        socket.on('coHostRequestDeclined', () => {
+          if (active) {
+            setCoHostStatus('declined');
+            showToast('error', 'The host declined your request to join.');
+            setTimeout(() => {
+              if (active) setCoHostStatus('idle');
+            }, 3000);
+          }
+        });
+
+        // Chat Moderation: Muted by Host
+        socket.on('userMuted', ({ userId }) => {
+          const myId = user.id || user._id;
+          if (String(userId) === String(myId)) {
+            setMutedUsers(prev => [...prev, userId]);
+            showToast('warning', 'You have been muted by the host.');
+          }
+        });
+
+        // Kicked from stream by Host
+        socket.on('kickedByHost', () => {
+          showToast('error', 'You were removed from the stream by the host.');
+          navigate('/');
         });
       }
     };
@@ -251,6 +418,14 @@ export default function LiveStreamPage() {
       // Close all peer connections
       Object.values(peerConnections.current).forEach(pc => pc.close());
       peerConnections.current = {};
+
+      // Clean up composite canvas loop and AudioContext
+      if (drawLoopRef.current) {
+        cancelAnimationFrame(drawLoopRef.current);
+      }
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close().catch(() => {});
+      }
 
       if (socket) {
         socket.emit('leaveLive', {
@@ -409,6 +584,72 @@ export default function LiveStreamPage() {
           />
         )}
 
+        {/* Floating request button for viewers */}
+        {!isHost && (
+          <div className="absolute bottom-4 right-4 z-20">
+            {coHostStatus === 'idle' && (
+              <button 
+                onClick={() => {
+                  setCoHostStatus('requesting');
+                  socket.emit('requestCoHost', { channelName, userId: user.id || user._id, userName: user.name, userAvatar: user.avatar });
+                  showToast('info', 'Sent request to join as co-host.');
+                }}
+                className="flex items-center gap-1.5 px-4 py-2.5 rounded-full bg-sp-blue hover:bg-blue-600 text-white text-xs font-black shadow-lg transition-transform active:scale-95 pointer-events-auto"
+              >
+                <FiVideo size={14} />
+                Request Co-Host
+              </button>
+            )}
+            {coHostStatus === 'requesting' && (
+              <span className="flex items-center gap-1.5 px-4 py-2.5 rounded-full bg-zinc-800 text-zinc-400 text-xs font-bold shadow-lg border border-zinc-700 pointer-events-auto animate-pulse">
+                Pending Approval...
+              </span>
+            )}
+            {coHostStatus === 'approved' && (
+              <span className="flex items-center gap-1.5 px-4 py-2.5 rounded-full bg-green-600 text-white text-xs font-bold shadow-lg pointer-events-auto">
+                Co-Hosting Active
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Pending Co-Host Approval Request banner for Host */}
+        {isHost && pendingRequests.length > 0 && (
+          <div className="absolute bottom-20 left-4 right-4 md:left-1/2 md:right-auto md:-translate-x-1/2 bg-zinc-900 border border-zinc-800 rounded-2xl p-4 shadow-2xl z-30 max-w-sm w-full flex items-center justify-between gap-4 animate-bounce pointer-events-auto">
+            <div className="flex items-center gap-3">
+              <Avatar src={pendingRequests[0].userAvatar} alt={pendingRequests[0].userName} size="sm" />
+              <div className="text-left">
+                <p className="text-xs font-bold text-white leading-tight">{pendingRequests[0].userName}</p>
+                <p className="text-[10px] text-zinc-400">Wants to join as co-host</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => {
+                  const targetId = pendingRequests[0].userId;
+                  socket.emit('approveCoHost', { channelName, viewerId: targetId });
+                  setPendingRequests(prev => prev.filter(r => r.userId !== targetId));
+                  showToast('success', 'Approved co-host request.');
+                }}
+                className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white font-black text-[10px] rounded-lg transition"
+              >
+                Accept
+              </button>
+              <button 
+                onClick={() => {
+                  const targetId = pendingRequests[0].userId;
+                  socket.emit('declineCoHost', { channelName, viewerId: targetId });
+                  setPendingRequests(prev => prev.filter(r => r.userId !== targetId));
+                  showToast('info', 'Declined request.');
+                }}
+                className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-[10px] rounded-lg transition"
+              >
+                Decline
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Live Top Banner Overlay */}
         <div className="absolute top-4 left-4 right-4 flex items-center justify-between z-10 pointer-events-none">
           <div className="flex items-center gap-2">
@@ -419,6 +660,9 @@ export default function LiveStreamPage() {
             <span className="flex items-center justify-center gap-1 px-3 py-1 rounded-full bg-black/45 backdrop-blur text-white text-xs font-bold">
               <FiUsers size={12} />
               {viewerCount}
+            </span>
+            <span className="flex items-center justify-center px-3 py-1 rounded-full bg-black/45 backdrop-blur text-white text-xs font-semibold">
+              {formatDuration(duration)}
             </span>
           </div>
 
@@ -481,7 +725,36 @@ export default function LiveStreamPage() {
                     <p className="text-xs flex items-center gap-1 flex-wrap">
                       <span className="font-bold text-sp-blue">{msg.user?.name}</span>
                       {msg.user?.verified && <VerifiedBadge size={10} />}
-                      <span className="text-zinc-200 ml-0.5 block">
+                      
+                      {/* Host Moderation Controls */}
+                      {isHost && msg.user && String(msg.user._id || msg.user.id) !== String(user.id || user._id) && (
+                        <span className="inline-flex items-center gap-1.5 ml-2">
+                          <button 
+                            onClick={() => {
+                              const targetUserId = msg.user._id || msg.user.id;
+                              socket.emit('muteUser', { channelName, userId: targetUserId });
+                              showToast('success', `Muted ${msg.user.name}`);
+                            }}
+                            className="text-[9px] font-black text-amber-500 hover:text-amber-600 underline cursor-pointer"
+                            title="Mute user chat"
+                          >
+                            Mute
+                          </button>
+                          <button 
+                            onClick={() => {
+                              const targetUserId = msg.user._id || msg.user.id;
+                              socket.emit('kickUser', { channelName, userId: targetUserId });
+                              showToast('success', `Kicked ${msg.user.name} from stream`);
+                            }}
+                            className="text-[9px] font-black text-red-500 hover:text-red-600 underline cursor-pointer"
+                            title="Remove user from stream"
+                          >
+                            Remove
+                          </button>
+                        </span>
+                      )}
+
+                      <span className="text-zinc-200 ml-0.5 block w-full text-left">
                         {msg.type === 'sticker' || (typeof msg.text === 'string' && (msg.text.startsWith('https://fonts.gstatic.com/') || msg.text.startsWith('data:image/'))) ? (
                           <img src={msg.text} alt="sticker" className="w-16 h-16 object-contain mt-1 rounded bg-zinc-950/40 p-1 border border-zinc-800" />
                         ) : (
@@ -505,15 +778,21 @@ export default function LiveStreamPage() {
 
         {/* Form input */}
         <div className="p-3 border-t border-zinc-800 flex-shrink-0 bg-zinc-900 text-left">
-          <TextInputWithEmoji
-            value={commentText}
-            onChange={setCommentText}
-            onSubmit={() => submitLiveComment()}
-            onStickerSelect={(url) => submitLiveComment(url)}
-            placeholder="Comment live..."
-            showAvatar={false}
-            panelDirection="above"
-          />
+          {mutedUsers.includes(user.id || user._id) ? (
+            <div className="text-center text-xs py-2 text-zinc-500 font-semibold bg-zinc-950/45 rounded-lg border border-zinc-800 animate-pulse">
+              🔇 You have been muted by the host
+            </div>
+          ) : (
+            <TextInputWithEmoji
+              value={commentText}
+              onChange={setCommentText}
+              onSubmit={() => submitLiveComment()}
+              onStickerSelect={(url) => submitLiveComment(url)}
+              placeholder="Comment live..."
+              showAvatar={false}
+              panelDirection="above"
+            />
+          )}
         </div>
       </div>
 

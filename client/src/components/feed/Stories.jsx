@@ -151,9 +151,12 @@ export default function Stories() {
 
 // ─── Story Card ────────────────────────────────────────────────────────────────
 function StoryCard({ story, onClick }) {
+  const { getLiveChannelForUser } = useApp();
+  const liveChannel = getLiveChannelForUser(story.user?.id || story.user?._id);
+
   return (
     <div
-      onClick={onClick}
+      onClick={liveChannel ? undefined : onClick}
       className="relative flex-shrink-0 w-[105px] h-[180px] rounded-2xl overflow-hidden cursor-pointer group"
     >
       <img
@@ -169,7 +172,8 @@ function StoryCard({ story, onClick }) {
           src={story.user?.avatar}
           alt={story.user?.name}
           className="w-9 h-9"
-          ring={true}
+          ring={!liveChannel}
+          liveChannel={liveChannel}
         />
       </div>
 

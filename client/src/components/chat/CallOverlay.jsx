@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { FiPhone, FiPhoneOff, FiVideo, FiVideoOff, FiMic, FiMicOff, FiVolume2, FiCameraOff } from 'react-icons/fi';
 import AgoraRTC from 'agora-rtc-sdk-ng';
 import Avatar from '../ui/Avatar';
+import { messagesAPI } from '../../api/messages';
 
 // Use environment variable or default temporary App ID
 const AGORA_APP_ID = import.meta.env.VITE_AGORA_APP_ID || '109f352202884564ab396c732df1364e'; 
@@ -231,8 +232,20 @@ export default function CallOverlay({ callData, callState, onAccept, onDecline, 
         });
 
         // 3. Join the Agora Channel
-        // We use a temp token or null (if Agora App ID runs in testing mode without token verification)
-        await client.join(AGORA_APP_ID, callData.channelName, null, currentUser.id || currentUser._id);
+        // We fetch a secure RTC token from the backend
+        let token = null;
+        let appIdToUse = AGORA_APP_ID;
+        try {
+          const tokenRes = await messagesAPI.getAgoraToken(callData.channelName);
+          if (tokenRes.success) {
+            token = tokenRes.token;
+            if (tokenRes.appId) appIdToUse = tokenRes.appId;
+          }
+        } catch (tokenErr) {
+          console.warn('Failed to fetch Agora token, falling back to insecure channel join', tokenErr);
+        }
+
+        await client.join(appIdToUse, callData.channelName, token, 0);
 
         // 4. Create and publish local tracks individually
         const tracks = [];

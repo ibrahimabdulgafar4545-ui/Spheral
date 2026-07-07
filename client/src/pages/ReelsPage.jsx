@@ -3,12 +3,13 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import MainLayout from '../components/layout/MainLayout';
 import { useApp } from '../context/AppContext';
 import { reelsAPI } from '../api/reels';
+import { messagesAPI } from '../api/messages';
 import { friendsAPI } from '../api/friends';
 import {
   FiHeart, FiMessageCircle, FiShare2, FiMusic, FiVolume2, FiVolumeX,
   FiPlus, FiX, FiSend, FiBookmark, FiDownload, FiMoreVertical,
   FiLink, FiThumbsDown, FiThumbsUp, FiFlag, FiTrash2, FiExternalLink,
-  FiSmile, FiPaperclip, FiEdit2
+  FiSmile, FiPaperclip, FiEdit2, FiVideo
 } from 'react-icons/fi';
 import { BsBookmarkFill } from 'react-icons/bs';
 import Avatar from '../components/ui/Avatar';
@@ -49,6 +50,23 @@ export default function ReelsPage() {
   const fileInputRef              = useRef(null);
   const [activeReelId, setActiveReelId] = useState(null);
   const [reelsMuted, setReelsMuted] = useState(true);
+
+  // Live Stream Discovery
+  const [activeTab, setActiveTab] = useState('reels'); // 'reels' | 'live'
+  const [activeStreams, setActiveStreams] = useState([]);
+
+  // Fetch active live streams
+  useEffect(() => {
+    if (activeTab === 'live') {
+      messagesAPI.getActiveStreams()
+        .then(res => {
+          if (res.success) {
+            setActiveStreams(res.streams || []);
+          }
+        })
+        .catch(err => console.error('Failed to load active streams:', err));
+    }
+  }, [activeTab]);
 
   // Reel Creation Flow
   const [pendingFile, setPendingFile]           = useState(null);
@@ -373,27 +391,48 @@ export default function ReelsPage() {
 
   return (
     <MainLayout hideRight>
-      <div className="max-w-[500px] mx-auto h-[calc(100vh-64px)] h-[calc(100dvh-64px)] relative bg-black md:rounded-xl overflow-hidden shadow-2xl pb-[env(safe-area-inset-bottom,0px)]">
+      <div className="max-w-[500px] mx-auto h-[calc(100vh-64px)] h-[calc(100dvh-64px)] relative bg-black md:rounded-xl overflow-hidden shadow-2xl pb-[env(safe-area-inset-bottom,0px)] flex flex-col">
+
+        {/* Top Header Tab Selector Overlay */}
+        <div className="absolute top-4 left-0 right-0 z-30 flex items-center justify-center gap-6 text-white/70 font-semibold pointer-events-auto">
+          <button 
+            onClick={() => setActiveTab('reels')}
+            className={`relative pb-1 text-sm tracking-wide transition-all ${activeTab === 'reels' ? 'text-white font-bold border-b-2 border-white scale-105' : 'hover:text-white'}`}
+          >
+            Reels
+          </button>
+          <button 
+            onClick={() => setActiveTab('live')}
+            className={`relative pb-1 text-sm tracking-wide transition-all ${activeTab === 'live' ? 'text-white font-bold border-b-2 border-white scale-105' : 'hover:text-white'}`}
+          >
+            Live Now
+            {activeStreams.length > 0 && (
+              <span className="absolute -top-1 -right-2 w-2.5 h-2.5 rounded-full bg-red-600 animate-ping" />
+            )}
+          </button>
+        </div>
 
         <input type="file" ref={fileInputRef} onChange={handleFileChange}
           accept="video/mp4,video/quicktime,video/webm" className="hidden" />
 
-        {/* Feed */}
-        {loading ? (
-          <div className="flex h-full items-center justify-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white" />
-          </div>
-        ) : reels.length === 0 ? (
-          <div className="flex flex-col h-full items-center justify-center text-white p-6 text-center">
-            <FiMusic size={48} className="mb-4 opacity-40" />
-            <h2 className="text-xl font-bold mb-2">{t('reels.noReels')}</h2>
-            <p className="text-sm opacity-60 mb-6">{t('reels.beFirst')}</p>
-            <button onClick={() => fileInputRef.current?.click()} className="btn-primary flex items-center gap-2">
-              <FiPlus /> {t('reels.uploadReel')}
-            </button>
-          </div>
-        ) : (
-          <div className="h-full overflow-y-scroll snap-y snap-mandatory no-scroll" style={{ scrollBehavior: 'smooth' }}>
+        {/* Tab: Reels */}
+        {activeTab === 'reels' ? (
+          /* Feed */
+          loading ? (
+            <div className="flex h-full items-center justify-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white" />
+            </div>
+          ) : reels.length === 0 ? (
+            <div className="flex flex-col h-full items-center justify-center text-white p-6 text-center">
+              <FiMusic size={48} className="mb-4 opacity-40" />
+              <h2 className="text-xl font-bold mb-2">{t('reels.noReels')}</h2>
+              <p className="text-sm opacity-60 mb-6">{t('reels.beFirst')}</p>
+              <button onClick={() => fileInputRef.current?.click()} className="btn-primary flex items-center gap-2">
+                <FiPlus /> {t('reels.uploadReel')}
+              </button>
+            </div>
+          ) : (
+            <div className="h-full overflow-y-scroll snap-y snap-mandatory no-scroll" style={{ scrollBehavior: 'smooth' }}>
             {reels.map(reel => (
               <ReelItem
                 key={reel.id || reel._id}
@@ -413,6 +452,75 @@ export default function ReelsPage() {
                 setMuted={setReelsMuted}
               />
             ))}
+          </div>
+        ) : (
+          /* Tab: Live Discovery Grid */
+          <div className="flex-1 overflow-y-auto p-4 pt-16 bg-zinc-950 text-white flex flex-col no-scroll">
+            <h2 className="text-base font-bold mb-4 flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-red-600 animate-pulse" />
+              Live Streams Discovery
+            </h2>
+            {activeStreams.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-zinc-400 p-6 text-center">
+                <div className="w-16 h-16 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center mb-4 text-zinc-600 shadow-inner">
+                  <FiVideo size={28} />
+                </div>
+                <h3 className="font-bold text-white text-sm mb-1">No Active Live Streams</h3>
+                <p className="text-xs opacity-75 max-w-[240px] mx-auto mb-6">Join or follow creators to see when they go live, or start your own stream now!</p>
+                <button 
+                  onClick={() => navigate(`/live/live_user_${user?.id || user?._id}?host=true`)} 
+                  className="px-6 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold text-xs shadow-md transition"
+                >
+                  Go Live Now
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3 pb-8">
+                {activeStreams.map((stream) => (
+                  <div 
+                    key={stream.channelName}
+                    onClick={() => navigate(`/live/${stream.channelName}`)}
+                    className="relative aspect-[9/16] bg-zinc-900 rounded-2xl overflow-hidden cursor-pointer group shadow border border-zinc-800 hover:border-red-500/40 transition-colors"
+                  >
+                    {/* Simulated live preview background */}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-black/50 z-10" />
+                    {stream.hostAvatar ? (
+                      <img 
+                        src={getAssetUrl(stream.hostAvatar)} 
+                        alt="" 
+                        className="absolute inset-0 w-full h-full object-cover opacity-40 blur-[2px] group-hover:scale-105 transition-transform duration-300"
+                      />
+                    ) : (
+                      <div className="absolute inset-0 bg-gradient-to-tr from-zinc-800 to-zinc-900" />
+                    )}
+
+                    {/* Viewer Count Badge */}
+                    <span className="absolute top-3 left-3 bg-red-600 text-white text-[9px] font-extrabold px-2 py-0.5 rounded-full flex items-center gap-1 shadow z-20 animate-pulse">
+                      LIVE
+                    </span>
+                    <span className="absolute top-3 right-3 bg-black/45 backdrop-blur text-white text-[9px] font-bold px-2 py-0.5 rounded-full z-20">
+                      {stream.viewersCount || 1} watching
+                    </span>
+
+                    {/* Host details overlaid */}
+                    <div className="absolute bottom-3 left-3 right-3 z-20 flex flex-col gap-1.5 text-left">
+                      <div className="flex items-center gap-2">
+                        <Avatar 
+                          src={stream.hostAvatar} 
+                          alt={stream.hostName} 
+                          size="sm" 
+                          ring={true}
+                        />
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-white truncate">{stream.hostName}</p>
+                          <p className="text-[10px] text-zinc-300">Tap to join</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

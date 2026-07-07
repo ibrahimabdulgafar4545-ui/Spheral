@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { getAssetUrl } from '../../utils/helpers';
 
 const COLORS = [
@@ -19,11 +20,12 @@ function getColor(str) {
 }
 
 /**
- * Reusable Avatar component with optional online indicator and size variants.
- * Usage: <Avatar src={url} alt="Name" size="md" online />
+ * Reusable Avatar component with optional online indicator, size variants, and TikTok-style LIVE stream overlays.
+ * Usage: <Avatar src={url} alt="Name" size="md" online liveChannel="live_user_123" />
  */
-export default function Avatar({ src, alt = '', size = 'md', online = false, className = '', ring = false }) {
+export default function Avatar({ src, alt = '', size = 'md', online = false, className = '', ring = false, liveChannel = null }) {
   const [error, setError] = useState(false);
+  const navigate = useNavigate();
 
   const sizes = {
     xs: 'w-6 h-6 text-[10px]',
@@ -48,8 +50,16 @@ export default function Avatar({ src, alt = '', size = 'md', online = false, cla
   const showFallback = !src || error;
   const bgColor = getColor(alt);
 
-  return (
-    <div className={`relative inline-flex items-center justify-center flex-shrink-0 rounded-full ${className}`}>
+  const handleClick = (e) => {
+    if (liveChannel) {
+      e.stopPropagation();
+      e.preventDefault();
+      navigate(`/live/${liveChannel}`);
+    }
+  };
+
+  const mainAvatar = (
+    <div className={`relative inline-flex items-center justify-center flex-shrink-0 rounded-full`}>
       {showFallback ? (
         <div className={`flex items-center justify-center rounded-full text-white font-bold uppercase select-none border border-sp-border ${bgColor} ${sizes[size] || sizes.md} ${ring ? 'ring-2 ring-sp-blue/40' : ''}`}>
           {alt ? alt.charAt(0) : '?'}
@@ -62,11 +72,34 @@ export default function Avatar({ src, alt = '', size = 'md', online = false, cla
           className={`${sizes[size] || sizes.md} rounded-full object-cover ${ring ? 'ring-2 ring-sp-blue/40' : ''}`}
         />
       )}
-      {online && (
+      {online && !liveChannel && (
         <div
           className={`${dotSizes[size] || dotSizes.md} absolute bottom-0 right-0 rounded-full bg-green-400 ${size === '32' ? '' : 'border-2'} border-sp-card`}
         />
       )}
+    </div>
+  );
+
+  if (liveChannel) {
+    return (
+      <div 
+        onClick={handleClick} 
+        className={`relative inline-flex flex-shrink-0 items-center justify-center p-[2.5px] rounded-full bg-gradient-to-tr from-pink-500 via-purple-600 to-red-500 shadow-md cursor-pointer hover:scale-105 active:scale-95 transition-transform duration-200 animate-pulse ${className}`}
+        title="Tap to join Live stream!"
+      >
+        <div className="p-[1.5px] bg-sp-card rounded-full flex items-center justify-center">
+          {mainAvatar}
+        </div>
+        <span className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 bg-gradient-to-r from-pink-500 to-red-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full border border-sp-card shadow leading-none uppercase tracking-wide scale-90 z-20">
+          LIVE
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`${className} inline-flex flex-shrink-0`}>
+      {mainAvatar}
     </div>
   );
 }
