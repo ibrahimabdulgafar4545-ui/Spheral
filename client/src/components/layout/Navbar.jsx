@@ -57,6 +57,13 @@ export default function Navbar() {
   
   const navigate = useNavigate();
   const location = useLocation();
+  const searchParams = new URLSearchParams(location.search);
+  const chatParam = searchParams.get('chat');
+  const isMobileChat = location.pathname.startsWith('/messages') && chatParam && typeof window !== 'undefined' && window.innerWidth < 768;
+
+  if (isMobileChat) {
+    return null;
+  }
 
   const currentUserId = user?.id || user?._id;
   const otherAccounts = (accounts || []).filter(a => a.id !== currentUserId);
@@ -810,12 +817,12 @@ export default function Navbar() {
                 isActive('/profile') ? "text-sp-blue" : "text-sp-sub"
               )}
             >
-              <div className={clsx(
-                "rounded-full p-0.5 transition-all duration-150",
-                isActive('/profile') ? "ring-2 ring-sp-blue" : "hover:ring-1 hover:ring-sp-border"
-              )}>
-                <Avatar src={user?.avatar} alt={user?.name} className="w-10 h-10" />
-              </div>
+              <Avatar 
+                src={user?.avatar} 
+                alt={user?.name} 
+                size="xs" 
+                ring={isActive('/profile')} 
+              />
               <span className="text-[10px] mt-0.5 font-medium">Profile</span>
               {isActive('/profile') && (
                 <span className="absolute bottom-1 w-5 h-0.5 rounded-full bg-sp-blue" />

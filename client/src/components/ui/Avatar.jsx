@@ -98,7 +98,7 @@ export default function Avatar({ src, alt = '', size = 'md', online = false, cla
   }
 
   return (
-    <div className={`${className} inline-flex flex-shrink-0`}>
+    <div className={`${className} inline-flex flex-shrink-0 rounded-full`}>
       {mainAvatar}
     </div>
   );

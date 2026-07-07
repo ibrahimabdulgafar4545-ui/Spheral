@@ -1,9 +1,23 @@
+import { useLocation } from 'react-router-dom';
 import Navbar from './Navbar';
 import LeftSidebar from './LeftSidebar';
 import RightSidebar from './RightSidebar';
 import LiveNotificationBanner from '../ui/LiveNotificationBanner';
 
 export default function MainLayout({ children, hideRight = false, hideSidebars = false }) {
+  const location = useLocation();
+  const searchParams = new URLSearchParams(location.search);
+  const chatParam = searchParams.get('chat');
+  const isMobileChat = location.pathname.startsWith('/messages') && chatParam && typeof window !== 'undefined' && window.innerWidth < 768;
+
+  if (isMobileChat) {
+    return (
+      <div className="min-h-screen bg-sp-bg">
+        <main className="min-h-screen min-h-[100dvh] pb-0">{children}</main>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-sp-bg">
       <Navbar />

@@ -49,7 +49,32 @@ export default function ReelsPage() {
   const [uploading, setUploading] = useState(false);
   const fileInputRef              = useRef(null);
   const [activeReelId, setActiveReelId] = useState(null);
-  const [reelsMuted, setReelsMuted] = useState(true);
+  const [reelsMuted, setReelsMuted] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth >= 768;
+    }
+    return true;
+  });
+
+  // Mobile autoplay sound unlock: unmute on first tap/scroll anywhere
+  useEffect(() => {
+    const unlockSound = () => {
+      if (window.innerWidth < 768 && reelsMuted) {
+        setReelsMuted(false);
+        document.removeEventListener('click', unlockSound);
+        document.removeEventListener('touchstart', unlockSound);
+        document.removeEventListener('scroll', unlockSound, { capture: true });
+      }
+    };
+    document.addEventListener('click', unlockSound);
+    document.addEventListener('touchstart', unlockSound);
+    document.addEventListener('scroll', unlockSound, { capture: true });
+    return () => {
+      document.removeEventListener('click', unlockSound);
+      document.removeEventListener('touchstart', unlockSound);
+      document.removeEventListener('scroll', unlockSound, { capture: true });
+    };
+  }, [reelsMuted]);
 
   // Live Stream Discovery
   const [activeTab, setActiveTab] = useState('reels'); // 'reels' | 'live'
@@ -393,8 +418,11 @@ export default function ReelsPage() {
     <MainLayout hideRight>
       <div className="max-w-[500px] mx-auto h-[calc(100vh-64px)] h-[calc(100dvh-64px)] relative bg-black md:rounded-xl overflow-hidden shadow-2xl pb-[env(safe-area-inset-bottom,0px)] flex flex-col">
 
-        {/* Top Header Tab Selector Overlay */}
-        <div className="absolute top-4 left-0 right-0 z-30 flex items-center justify-center gap-6 text-white/70 font-semibold pointer-events-auto">
+        {/* Top Header Tab Selector Overlay (Fixed at top of screen) */}
+        <div 
+          className="fixed left-1/2 -translate-x-1/2 z-30 flex items-center justify-center gap-6 text-white/70 font-semibold pointer-events-auto max-w-[500px] w-full"
+          style={{ top: 'calc(3.5rem + env(safe-area-inset-top, 0px) + 1rem)' }}
+        >
           <button 
             onClick={() => setActiveTab('reels')}
             className={`relative pb-1 text-sm tracking-wide transition-all ${activeTab === 'reels' ? 'text-white font-bold border-b-2 border-white scale-105' : 'hover:text-white'}`}
@@ -1151,9 +1179,9 @@ function ReelItem({ reel, currentUser, isActive, onVisible, onLike, onSave, onCo
         </div>
       )}
 
-      {/* Mute toggle — top left */}
+      {/* Mute toggle — top left (desktop only) */}
       <button onClick={toggleMute}
-        className="absolute top-4 left-4 z-20 w-9 h-9 bg-black/40 backdrop-blur rounded-full flex items-center justify-center text-white hover:bg-black/60 transition pointer-events-auto">
+        className="absolute top-4 left-4 z-20 w-9 h-9 bg-black/40 backdrop-blur rounded-full hidden md:flex items-center justify-center text-white hover:bg-black/60 transition pointer-events-auto">
         {muted ? <FiVolumeX size={16} /> : <FiVolume2 size={16} />}
       </button>
 

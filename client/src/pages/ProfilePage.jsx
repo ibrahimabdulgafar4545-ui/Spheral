@@ -838,6 +838,7 @@ export default function ProfilePage() {
             />
           </div>
         </div>
+      )}
       {/* Floating Profile Live Indicator at the bottom */}
       {profileUser && getLiveChannelForUser && getLiveChannelForUser(profileUser._id || profileUser.id) && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-gradient-to-r from-pink-500 via-purple-600 to-red-500 rounded-2xl p-[1.5px] shadow-2xl animate-bounce pointer-events-auto max-w-[280px] w-full select-none text-white">

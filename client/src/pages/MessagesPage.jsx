@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   FiSend, FiPaperclip, FiMic, FiPhone, FiVideo,
   FiSmile, FiTrash2, FiX, FiSquare, FiChevronLeft, FiSearch, FiCheckCircle, FiMessageCircle, FiThumbsUp, FiStar, FiPlus,
@@ -44,6 +44,14 @@ const formatMessageTimeBlock = (date) => {
   return date.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ', ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 };
 
+const MessagesLayoutWrapper = ({ isMobileChatActive, children }) => {
+  return isMobileChatActive ? (
+    <div className="fixed inset-0 z-50 bg-sp-bg flex flex-col h-screen h-[100dvh] pb-0">{children}</div>
+  ) : (
+    <MainLayout hideRight>{children}</MainLayout>
+  );
+};
+
 export default function MessagesPage() {
   const { t } = useLanguage();
   const {
@@ -66,6 +74,8 @@ export default function MessagesPage() {
   } = useApp();
 
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const chatParam = searchParams.get('chat');
 
   const [text, setText] = useState('');
   const [searchVal, setSearchVal] = useState('');
@@ -74,6 +84,7 @@ export default function MessagesPage() {
   const [editingMessage, setEditingMessage] = useState(null);
   const [actionsExpanded, setActionsExpanded] = useState(false);
   const [deleteMenuId, setDeleteMenuId] = useState(null);
+  const [messageToDelete, setMessageToDelete] = useState(null);
   const [chatMenuOpen, setChatMenuOpen] = useState(false);
   const [blockedUsers, setBlockedUsers] = useState([]);
   const [mutedChats, setMutedChats] = useState(() => {
@@ -82,6 +93,15 @@ export default function MessagesPage() {
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportReason, setReportReason] = useState('');
   const [reportDesc, setReportDesc] = useState('');
+
+  const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 768 : false);
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const [showStickers, setShowStickers] = useState(false);
   const [showGifs, setShowGifs] = useState(false);
@@ -236,6 +256,43 @@ export default function MessagesPage() {
       scrollToBottom();
     }
   }, [chatMessages, activeChat]);
+
+  // Sync URL parameter -> activeChat state & activeChat state -> URL parameter
+  useEffect(() => {
+    if (chatParam) {
+      const activeChatId = activeChat?._id || activeChat?.id;
+      if (activeChatId !== chatParam) {
+        // Find the conversation
+        const foundChat = conversations.find(c => (c.friend?._id || c.friend?.id) === chatParam);
+        if (foundChat && foundChat.friend) {
+          openConversation(foundChat.friend);
+        } else {
+          // Find in friendsList
+          const foundFriend = friendsList.find(f => (f._id || f.id) === chatParam);
+          if (foundFriend) {
+            openConversation(foundFriend);
+          }
+        }
+      }
+    } else {
+      if (activeChat) {
+        closeConversation();
+      }
+    }
+  }, [chatParam, conversations, friendsList]);
+
+  useEffect(() => {
+    const activeChatId = activeChat?._id || activeChat?.id;
+    if (activeChatId) {
+      if (chatParam !== activeChatId) {
+        setSearchParams({ chat: activeChatId });
+      }
+    } else {
+      if (chatParam) {
+        setSearchParams({});
+      }
+    }
+  }, [activeChat]);
 
   // Handle typing state sockets
   const typingTimeoutRef = useRef(null);
@@ -410,9 +467,14 @@ export default function MessagesPage() {
   const isBlocked = blockedUsers.includes(activeChatId);
 
 
+  const isMobileChatActive = isMobile && (activeChat || chatParam);
+
   return (
-    <MainLayout hideRight>
-      <div className="max-w-[1000px] mx-auto w-full h-[calc(100vh-9.5rem)] h-[calc(100dvh-9.5rem)] md:h-[calc(100vh-6rem)] md:h-[calc(100dvh-6rem)] min-h-[400px] md:min-h-[500px] flex rounded-2xl border border-sp-border bg-sp-card overflow-hidden shadow-card-lg select-none mb-[env(safe-area-inset-bottom,0px)]">
+    <MessagesLayoutWrapper isMobileChatActive={isMobileChatActive}>
+      <div className={isMobileChatActive 
+        ? "w-full h-full flex bg-sp-card select-none"
+        : "max-w-[1000px] mx-auto w-full h-[calc(100vh-9.5rem)] h-[calc(100dvh-9.5rem)] md:h-[calc(100vh-6rem)] md:h-[calc(100dvh-6rem)] min-h-[400px] md:min-h-[500px] flex rounded-2xl border border-sp-border bg-sp-card overflow-hidden shadow-card-lg select-none mb-[env(safe-area-inset-bottom,0px)]"
+      }>
         
         {/* LEFT PANEL: Conversation list */}
         <div className={`w-full md:w-80 border-r border-sp-border flex flex-col flex-shrink-0 ${activeChat ? 'hidden md:flex' : 'flex'}`}>
@@ -588,12 +650,16 @@ export default function MessagesPage() {
 
                         {/* Clear Chat */}
                         <button
-                          onClick={() => {
+                          onClick={async () => {
                             if (window.confirm(`Clear all messages with ${activeChat.name}? This only removes them from your view.`)) {
-                              chatMessages.forEach(msg => {
-                                deleteMessage(msg._id || msg.id, 'me');
-                              });
-                              showToast('info', 'Chat cleared');
+                              try {
+                                await messagesAPI.deleteConversation(activeChat._id || activeChat.id);
+                                showToast('info', 'Chat cleared');
+                              } catch (e) {
+                                console.error('Clear chat error:', e);
+                              }
+                              closeConversation();
+                              loadConversations();
                             }
                             setChatMenuOpen(false);
                           }}
@@ -798,41 +864,19 @@ export default function MessagesPage() {
                                 </svg>
                               </button>
                             )}
-                            {/* Delete dropdown trigger */}
-                            <div className="relative">
-                              <button
-                                onClick={() => setDeleteMenuId(deleteMenuId === (msg._id || msg.id) ? null : (msg._id || msg.id))}
-                                className="p-1.5 rounded-lg bg-sp-card hover:bg-sp-hover text-sp-sub hover:text-sp-red border border-sp-border transition-all"
-                                title="Delete"
-                              >
-                                <svg stroke="currentColor" fill="none" strokeWidth="2" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round" height="13" width="13" xmlns="http://www.w3.org/2000/svg">
-                                  <polyline points="3 6 5 6 21 6"></polyline>
-                                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                                  <line x1="10" y1="11" x2="10" y2="17"></line>
-                                  <line x1="14" y1="11" x2="14" y2="17"></line>
-                                </svg>
-                              </button>
-                              {deleteMenuId === (msg._id || msg.id) && (
-                                <div className={`absolute z-50 bg-sp-card border border-sp-border rounded-xl shadow-dropdown py-1.5 w-44 animate-bounce-in ${isMe ? 'right-0' : 'left-0'}`} style={{ bottom: '110%' }}>
-                                  {isMe && (
-                                    <button
-                                      onClick={() => { deleteMessage(msg._id || msg.id, 'everyone'); setDeleteMenuId(null); }}
-                                      className="w-full text-left px-3.5 py-2 text-xs text-sp-text hover:bg-sp-hover flex items-center gap-2 transition-colors"
-                                    >
-                                      <FiTrash2 size={13} className="text-red-500" />
-                                      Delete for Everyone
-                                    </button>
-                                  )}
-                                  <button
-                                    onClick={() => { deleteMessage(msg._id || msg.id, 'me'); setDeleteMenuId(null); }}
-                                    className="w-full text-left px-3.5 py-2 text-xs text-sp-text hover:bg-sp-hover flex items-center gap-2 transition-colors"
-                                  >
-                                    <FiX size={13} className="text-sp-muted" />
-                                    Delete for Me
-                                  </button>
-                                </div>
-                              )}
-                            </div>
+                            {/* Delete button (triggers global confirmation modal) */}
+                            <button
+                              onClick={() => setMessageToDelete(msg)}
+                              className="p-1.5 rounded-lg bg-sp-card hover:bg-sp-hover text-sp-sub hover:text-sp-red border border-sp-border transition-all"
+                              title="Delete"
+                            >
+                              <svg stroke="currentColor" fill="none" strokeWidth="2" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round" height="13" width="13" xmlns="http://www.w3.org/2000/svg">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                <line x1="10" y1="11" x2="10" y2="17"></line>
+                                <line x1="14" y1="11" x2="14" y2="17"></line>
+                              </svg>
+                            </button>
                           </div>
 
                           {/* Avatar */}
@@ -1311,7 +1355,11 @@ export default function MessagesPage() {
                       </button>
                       <button
                         onClick={async () => {
-                          await messagesAPI.deleteConversation(activeChatId);
+                          try {
+                            await messagesAPI.deleteConversation(activeChatId);
+                          } catch (e) {
+                            console.error('Delete conversation error:', e);
+                          }
                           closeConversation();
                           loadConversations();
                         }}
@@ -1535,7 +1583,47 @@ export default function MessagesPage() {
           </div>
         </div>
       )}
-    </MainLayout>
+
+      {/* Delete Message Confirmation Modal (WhatsApp Style) */}
+      {messageToDelete && (
+        <div className="fixed inset-0 z-[1000] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 select-none animate-fade-in" onClick={() => setMessageToDelete(null)}>
+          <div className="bg-sp-card border border-sp-border rounded-3xl p-5 max-w-sm w-full shadow-2xl animate-scale-in text-center" onClick={e => e.stopPropagation()}>
+            <FiTrash2 size={28} className="text-red-500 mx-auto mb-3" />
+            <h3 className="text-base font-bold text-sp-text mb-1">Delete Message?</h3>
+            <p className="text-xs text-sp-muted mb-5">Would you like to delete this message?</p>
+            
+            <div className="flex flex-col gap-2">
+              {(messageToDelete.sender === user?.id || messageToDelete.sender?._id === user?.id || messageToDelete.sender === user?._id) && (
+                <button
+                  onClick={() => {
+                    deleteMessage(messageToDelete._id || messageToDelete.id, 'everyone');
+                    setMessageToDelete(null);
+                  }}
+                  className="w-full py-2.5 bg-red-500 hover:bg-red-600 text-white rounded-xl text-xs font-bold transition active:scale-95 cursor-pointer"
+                >
+                  Delete for Everyone
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  deleteMessage(messageToDelete._id || messageToDelete.id, 'me');
+                  setMessageToDelete(null);
+                }}
+                className="w-full py-2.5 bg-sp-overlay hover:bg-sp-hover text-sp-text border border-sp-border rounded-xl text-xs font-bold transition active:scale-95 cursor-pointer"
+              >
+                Delete for Me
+              </button>
+              <button
+                onClick={() => setMessageToDelete(null)}
+                className="w-full py-2.5 text-xs text-sp-muted hover:text-sp-text transition cursor-pointer mt-1"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </MessagesLayoutWrapper>
   );
 }
 
