@@ -643,6 +643,7 @@ export default function MessagesPage() {
                     )}
                 </div>
               </div>
+            </div>
 
               {/* Floating animated join live prompt for active chat friend */}
               {getLiveChannelForUser && getLiveChannelForUser(activeChatId) && (
