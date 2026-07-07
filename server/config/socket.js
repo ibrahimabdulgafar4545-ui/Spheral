@@ -7,8 +7,8 @@ const onlineUsers = new Map(); // userId -> socketId
 const initSocket = (server) => {
   const io = socketio(server, {
     cors: {
-      origin: process.env.CLIENT_URL || 'http://localhost:3000',
-      credentials: true,
+      origin: "*", // Temporarily allow all origins to bypass Render CORS blocking
+      methods: ["GET", "POST"]
     },
   });
 
