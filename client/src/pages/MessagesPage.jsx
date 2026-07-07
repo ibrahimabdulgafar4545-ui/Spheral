@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import {
   FiSend, FiPaperclip, FiMic, FiPhone, FiVideo,
   FiSmile, FiTrash2, FiX, FiSquare, FiChevronLeft, FiSearch, FiCheckCircle, FiMessageCircle, FiThumbsUp, FiStar, FiPlus,
@@ -555,35 +555,40 @@ export default function MessagesPage() {
                   >
                     <FiChevronLeft size={20} />
                   </button>
-                  <div className="relative">
+                  <Link 
+                    to={`/profile/${activeChat._id || activeChat.id}`}
+                    className="flex items-center gap-3 min-w-0 hover:opacity-85 transition-opacity cursor-pointer group"
+                  >
+                    <div className="relative flex-shrink-0">
                       <Avatar
                         src={activeChat.avatar}
                         alt={activeChat.name}
                         online={activeChat.isOnline}
                         className="w-10 h-10 border border-sp-border"
                       />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="font-bold text-sm text-sp-text truncate flex items-center gap-1">
-                      {activeChat.name}
-                      {activeChat.verified && <VerifiedBadge size={13} />}
-                    </p>
-                    <div className="flex items-center gap-1.5 text-xs text-sp-muted">
-                      {isBlocked ? (
-                        <span className="text-sp-muted">{t('messages.blockedYou')}</span>
-                      ) : (
-                        activeChat.isOnline ? (
-                          <span className="flex items-center gap-1 text-[11px] text-green-400 font-semibold">
-                            <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" /> {t('messages.online')}
-                          </span>
-                        ) : activeChat.lastSeen ? (
-                          <span>{t('messages.lastSeen')} {timeAgo(activeChat.lastSeen)}</span>
-                        ) : (
-                          <span>{t('common.offline')}</span>
-                        )
-                      )}
                     </div>
-                  </div>
+                    <div className="min-w-0">
+                      <p className="font-bold text-sm text-sp-text truncate flex items-center gap-1 group-hover:text-sp-blue transition-colors">
+                        {activeChat.name}
+                        {activeChat.verified && <VerifiedBadge size={13} />}
+                      </p>
+                      <div className="flex items-center gap-1.5 text-xs text-sp-muted">
+                        {isBlocked ? (
+                          <span className="text-sp-muted">{t('messages.blockedYou')}</span>
+                        ) : (
+                          activeChat.isOnline ? (
+                            <span className="flex items-center gap-1 text-[11px] text-green-400 font-semibold">
+                              <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" /> {t('messages.online')}
+                            </span>
+                          ) : activeChat.lastSeen ? (
+                            <span>{t('messages.lastSeen')} {timeAgo(activeChat.lastSeen)}</span>
+                          ) : (
+                            <span>{t('common.offline')}</span>
+                          )
+                        )}
+                      </div>
+                    </div>
+                  </Link>
                 </div>
                 
                 <div className="flex items-center gap-2">
