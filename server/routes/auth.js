@@ -277,7 +277,7 @@ router.post('/google', async (req, res, next) => {
         username,
         email: emailLower,
         avatar: picture || '',
-        verified: true,
+        verified: false,
         country
       });
       console.log(`✅ New user registered via Google: ${emailLower}`);

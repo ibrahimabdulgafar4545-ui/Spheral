@@ -82,14 +82,23 @@ router.get('/suggestions', protect, async (req, res, next) => {
     });
     const sentUserIds = sentRequests.map(r => r.to.toString());
 
-    const excludeIds = [myId, ...existingFriendIds, ...incomingUserIds];
+    // Get blocked users
+    const usersWhoBlockedMe = await User.find({ blockedUsers: myId }).select('_id');
+    const blockedIds = [
+      ...(me.blockedUsers || []).map(id => id.toString()),
+      ...usersWhoBlockedMe.map(u => u._id.toString())
+    ];
+
+    const excludeIds = [myId, ...existingFriendIds, ...incomingUserIds, ...blockedIds];
 
     // Select name username avatar bio location verified AND friends
+    // Filter out inactive/suspended/banned users
     const suggestions = await User.find({
-      _id: { $nin: excludeIds }
+      _id: { $nin: excludeIds },
+      accountStatus: 'active'
     })
       .select('name username avatar bio location verified friends')
-      .limit(30); // fetch more to sort then slice
+      .limit(80); // fetch a pool to randomize
 
     const existingFriendStrings = existingFriendIds.map(id => id.toString());
 
@@ -109,10 +118,18 @@ router.get('/suggestions', protect, async (req, res, next) => {
       };
     });
 
-    // Sort by mutual friends count descending
-    suggestionsWithMutual.sort((a, b) => b.mutualFriends - a.mutualFriends);
+    // Shuffle array for randomness on every reload
+    const shuffleArray = (array) => {
+      for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+      }
+      return array;
+    };
 
-    res.status(200).json({ success: true, suggestions: suggestionsWithMutual.slice(0, 10) });
+    const shuffledSuggestions = shuffleArray(suggestionsWithMutual);
+
+    res.status(200).json({ success: true, suggestions: shuffledSuggestions.slice(0, 10) });
   } catch (error) {
     next(error);
   }

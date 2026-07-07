@@ -103,6 +103,10 @@ const UserSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    warningsCount: {
+      type: Number,
+      default: 0,
+    },
     friends: [
       {
         type: mongoose.Schema.Types.ObjectId,
