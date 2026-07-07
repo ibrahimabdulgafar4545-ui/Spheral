@@ -39,6 +39,12 @@ export default function LiveStreamPage() {
   const [duration, setDuration] = useState(0); // Live duration in seconds
   const [mutedUsers, setMutedUsers] = useState([]); // Array of muted userIds (chat moderation)
 
+  // Public/Private Live Session States
+  const [hasStartedStream, setHasStartedStream] = useState(!isHost); // For host: require setup screen first
+  const [streamMode, setStreamMode] = useState('public'); // 'public' | 'private'
+  const [pendingAccessRequests, setPendingAccessRequests] = useState([]); // Host: watch access requests
+  const [accessState, setAccessState] = useState(isHost ? 'approved' : 'checking'); // Viewers: access status
+
   // Live Dual WebRTC States
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
@@ -215,7 +221,7 @@ export default function LiveStreamPage() {
   useEffect(() => {
     let active = true;
 
-    const startHost = async () => {
+    const startHost = async (mode = 'public') => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         localStreamRef.current = stream;
@@ -255,7 +261,8 @@ export default function LiveStreamPage() {
           hostName: user.name,
           hostAvatar: user.avatar,
           channelName,
-          friends: friendIds
+          friends: friendIds,
+          mode
         });
 
         // 2. Join Room for chat & presence
@@ -269,28 +276,31 @@ export default function LiveStreamPage() {
         // 3. Handle incoming viewers (guests)
         socket.on('hostInitiateWebrtc', async ({ viewerId }) => {
           if (!active) return;
-          const pc = new RTCPeerConnection(ICE_SERVERS);
-          peerConnections.current[viewerId] = pc;
+          let pc = peerConnections.current[viewerId];
+          if (!pc) {
+            pc = new RTCPeerConnection(ICE_SERVERS);
+            peerConnections.current[viewerId] = pc;
 
-          // Add local tracks (Host stream)
-          if (localStreamRef.current) {
-            localStreamRef.current.getTracks().forEach(track => {
-              pc.addTrack(track, localStreamRef.current);
-            });
+            // Add local tracks (Host stream)
+            if (localStreamRef.current) {
+              localStreamRef.current.getTracks().forEach(track => {
+                pc.addTrack(track, localStreamRef.current);
+              });
+            }
+
+            // Receive guest (viewer) stream
+            pc.ontrack = (event) => {
+              if (event.streams && event.streams[0]) {
+                setRemoteStream(event.streams[0]);
+              }
+            };
+
+            pc.onicecandidate = (event) => {
+              if (event.candidate) {
+                socket.emit('liveWebrtcIceCandidate', { targetId: viewerId, candidate: event.candidate, senderId: user.id || user._id });
+              }
+            };
           }
-
-          // Receive guest (viewer) stream
-          pc.ontrack = (event) => {
-            if (event.streams && event.streams[0]) {
-              setRemoteStream(event.streams[0]);
-            }
-          };
-
-          pc.onicecandidate = (event) => {
-            if (event.candidate) {
-              socket.emit('liveWebrtcIceCandidate', { targetId: viewerId, candidate: event.candidate, senderId: user.id || user._id });
-            }
-          };
 
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
@@ -315,23 +325,35 @@ export default function LiveStreamPage() {
             showToast('info', `${userName} requested to join as co-host!`);
           }
         });
+
+        // 6. Handle spectator access requests
+        socket.on('liveAccessRequestReceived', ({ userId, userName, userAvatar }) => {
+          if (active) {
+            setPendingAccessRequests(prev => {
+              if (prev.find(r => r.userId === userId)) return prev;
+              return [...prev, { userId, userName, userAvatar }];
+            });
+            showToast('info', `${userName} requested access to watch your private stream!`);
+          }
+        });
       }
     };
 
-    const startViewer = () => {
-      if (socket && active) {
-        socket.emit('joinLive', {
-          channelName,
-          userId: user.id || user._id,
-          userName: user.name,
-          userAvatar: user.avatar
-        });
+    const proceedToJoinViewer = () => {
+      socket.emit('joinLive', {
+        channelName,
+        userId: user.id || user._id,
+        userName: user.name,
+        userAvatar: user.avatar
+      });
 
-        // Trigger host to create an offer for us to watch their stream
-        const hostId = channelName.replace('live_user_', ''); 
-        socket.emit('viewerJoinedLive', { channelName, viewerId: user.id || user._id });
+      // Trigger host to create an offer for us to watch their stream
+      const hostId = channelName.replace('live_user_', ''); 
+      socket.emit('viewerJoinedLive', { channelName, viewerId: user.id || user._id });
 
-        let pc = new RTCPeerConnection(ICE_SERVERS);
+      let pc = peerConnections.current['host'];
+      if (!pc) {
+        pc = new RTCPeerConnection(ICE_SERVERS);
         peerConnections.current['host'] = pc;
 
         // Receive host stream
@@ -409,6 +431,34 @@ export default function LiveStreamPage() {
       }
     };
 
+    const startViewer = () => {
+      if (socket && active) {
+        // Access status handler
+        socket.on('liveAccessStatus', ({ approved }) => {
+          if (approved) {
+            setAccessState('approved');
+            proceedToJoinViewer();
+          } else {
+            setAccessState('pending');
+            socket.emit('requestLiveAccess', { channelName, userId: user.id || user._id, userName: user.name, userAvatar: user.avatar });
+          }
+        });
+
+        socket.on('liveAccessApproved', () => {
+          setAccessState('approved');
+          proceedToJoinViewer();
+        });
+
+        socket.on('liveAccessDeclined', () => {
+          setAccessState('declined');
+          showToast('error', 'Your request to join this private stream was declined.');
+        });
+
+        // Request access validation
+        socket.emit('checkLiveAccess', { channelName, userId: user.id || user._id });
+      }
+    };
+
     // Shared Chat Listeners
     if (socket) {
       socket.on('liveMessage', (msg) => {
@@ -423,7 +473,9 @@ export default function LiveStreamPage() {
     }
 
     if (isHost) {
-      startHost();
+      if (hasStartedStream) {
+        startHost(streamMode);
+      }
     } else {
       startViewer();
     }
@@ -459,9 +511,13 @@ export default function LiveStreamPage() {
         socket.off('receiveWebrtcOffer');
         socket.off('receiveWebrtcAnswer');
         socket.off('receiveWebrtcIceCandidate');
+        socket.off('liveAccessStatus');
+        socket.off('liveAccessApproved');
+        socket.off('liveAccessDeclined');
+        socket.off('liveAccessRequestReceived');
       }
     };
-  }, [channelName, isHost, socket]);
+  }, [channelName, isHost, socket, hasStartedStream, streamMode]);
 
   // Audio/Video toggles
   const toggleMic = () => {
@@ -557,6 +613,143 @@ export default function LiveStreamPage() {
       setShowSaveModal(false);
     }
   };
+
+  if (isHost && !hasStartedStream) {
+    return (
+      <div className="fixed inset-0 z-[9999] bg-zinc-950 flex flex-col items-center justify-center p-4 text-white select-none">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-md w-full text-center shadow-2xl relative overflow-hidden">
+          <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-pink-500 via-purple-600 to-red-500" />
+          
+          <div className="mb-6 relative inline-block">
+            <Avatar src={user?.avatar} alt={user?.name} size="2xl" className="mx-auto border-4 border-zinc-800 shadow" />
+            <span className="absolute bottom-0 right-2 w-3.5 h-3.5 rounded-full bg-red-600 border-2 border-zinc-900 animate-pulse" />
+          </div>
+
+          <h2 className="text-xl font-black text-white mb-1">Set Up Your Live Stream</h2>
+          <p className="text-xs text-zinc-400 mb-6 font-semibold">Choose who can join and watch your broadcast in real-time.</p>
+
+          <div className="space-y-3 mb-8 text-left">
+            <label className="text-[10px] font-black uppercase tracking-wider text-zinc-500 px-1">Broadcast Privacy</label>
+            
+            {/* Public Mode Option */}
+            <button
+              onClick={() => setStreamMode('public')}
+              className={`w-full p-4 rounded-2xl border text-left transition flex items-start gap-3 cursor-pointer ${
+                streamMode === 'public'
+                  ? 'border-red-500 bg-red-500/5 text-white'
+                  : 'border-zinc-800 hover:border-zinc-700 bg-zinc-950 text-zinc-300'
+              }`}
+            >
+              <div className="mt-0.5">
+                <span className={`w-4 h-4 rounded-full border flex items-center justify-center ${
+                  streamMode === 'public' ? 'border-red-500' : 'border-zinc-600'
+                }`}>
+                  {streamMode === 'public' && <span className="w-2 h-2 rounded-full bg-red-500" />}
+                </span>
+              </div>
+              <div>
+                <p className="text-xs font-black">Public Broadcast</p>
+                <p className="text-[10px] opacity-70 mt-0.5 font-semibold">Anyone on the platform can join and watch instantly.</p>
+              </div>
+            </button>
+
+            {/* Private Mode Option */}
+            <button
+              onClick={() => setStreamMode('private')}
+              className={`w-full p-4 rounded-2xl border text-left transition flex items-start gap-3 cursor-pointer ${
+                streamMode === 'private'
+                  ? 'border-red-500 bg-red-500/5 text-white'
+                  : 'border-zinc-800 hover:border-zinc-700 bg-zinc-950 text-zinc-300'
+              }`}
+            >
+              <div className="mt-0.5">
+                <span className={`w-4 h-4 rounded-full border flex items-center justify-center ${
+                  streamMode === 'private' ? 'border-red-500' : 'border-zinc-600'
+                }`}>
+                  {streamMode === 'private' && <span className="w-2 h-2 rounded-full bg-red-500" />}
+                </span>
+              </div>
+              <div>
+                <p className="text-xs font-black">Private Broadcast (Approval Required)</p>
+                <p className="text-[10px] opacity-70 mt-0.5 font-semibold">Viewers must request access; you manually approve them before they join.</p>
+              </div>
+            </button>
+          </div>
+
+          <div className="flex gap-3">
+            <button
+              onClick={() => navigate('/')}
+              className="flex-1 py-3.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-2xl font-bold text-xs transition cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                setHasStartedStream(true);
+              }}
+              className="flex-1 py-3.5 bg-gradient-to-r from-red-600 to-pink-600 hover:from-red-700 hover:to-pink-700 text-white rounded-2xl font-bold text-xs transition shadow-lg shadow-red-900/20 cursor-pointer active:scale-[0.98]"
+            >
+              Go Live Now
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isHost && accessState === 'pending') {
+    return (
+      <div className="fixed inset-0 z-[9999] bg-zinc-950 flex flex-col items-center justify-center p-4 text-white select-none">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl relative overflow-hidden">
+          <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-pink-500 via-purple-600 to-red-500 animate-pulse" />
+          <div className="w-16 h-16 rounded-full bg-zinc-950 border border-zinc-800 flex items-center justify-center mx-auto mb-4 text-zinc-400">
+            <span className="relative flex h-3 w-3">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-red-600"></span>
+            </span>
+          </div>
+          <h2 className="text-base font-black text-white mb-2">Private Broadcast Access</h2>
+          <p className="text-xs text-zinc-400 mb-6 leading-relaxed font-semibold">
+            This live stream is private. A request has been sent to the host. Please wait for approval.
+          </p>
+          <div className="flex flex-col gap-2">
+            <div className="py-2.5 rounded-xl bg-zinc-950 border border-zinc-850 text-zinc-500 text-[10px] font-bold uppercase tracking-wider animate-pulse">
+              Pending Host Approval...
+            </div>
+            <button
+              onClick={() => navigate('/')}
+              className="py-3 bg-zinc-850 hover:bg-zinc-800 text-zinc-300 rounded-2xl font-bold text-xs transition cursor-pointer"
+            >
+              Exit to Home
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isHost && accessState === 'declined') {
+    return (
+      <div className="fixed inset-0 z-[9999] bg-zinc-950 flex flex-col items-center justify-center p-4 text-white select-none">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl relative overflow-hidden">
+          <div className="absolute top-0 left-0 right-0 h-1.5 bg-red-600" />
+          <div className="w-12 h-12 rounded-full bg-red-600/10 flex items-center justify-center mx-auto mb-4 text-red-500">
+            <FiX size={24} />
+          </div>
+          <h2 className="text-base font-black text-white mb-2">Access Denied</h2>
+          <p className="text-xs text-zinc-400 mb-6 leading-relaxed font-semibold">
+            Your request to join this private live stream was declined by the host.
+          </p>
+          <button
+            onClick={() => navigate('/')}
+            className="w-full py-3 bg-zinc-850 hover:bg-zinc-800 text-zinc-300 rounded-2xl font-bold text-xs transition cursor-pointer"
+          >
+            Back to Home
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-[9999] bg-black flex flex-col md:flex-row select-none">
@@ -662,6 +855,43 @@ export default function LiveStreamPage() {
                   showToast('info', 'Declined request.');
                 }}
                 className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-[10px] rounded-lg transition"
+              >
+                Decline
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Pending Viewer Access Requests for Private Live Stream (Host Only) */}
+        {isHost && pendingAccessRequests.length > 0 && (
+          <div className="absolute bottom-36 left-4 right-4 md:left-1/2 md:right-auto md:-translate-x-1/2 bg-zinc-900 border border-zinc-800 rounded-2xl p-4 shadow-2xl z-30 max-w-sm w-full flex items-center justify-between gap-4 animate-bounce pointer-events-auto">
+            <div className="flex items-center gap-3">
+              <Avatar src={pendingAccessRequests[0].userAvatar} alt={pendingAccessRequests[0].userName} size="sm" />
+              <div className="text-left">
+                <p className="text-xs font-bold text-white leading-tight">{pendingAccessRequests[0].userName}</p>
+                <p className="text-[10px] text-zinc-400">Wants to watch your private stream</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => {
+                  const targetId = pendingAccessRequests[0].userId;
+                  socket.emit('approveLiveAccess', { channelName, viewerId: targetId });
+                  setPendingAccessRequests(prev => prev.filter(r => r.userId !== targetId));
+                  showToast('success', 'Approved viewer access request.');
+                }}
+                className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white font-black text-[10px] rounded-lg transition cursor-pointer"
+              >
+                Approve
+              </button>
+              <button 
+                onClick={() => {
+                  const targetId = pendingAccessRequests[0].userId;
+                  socket.emit('declineLiveAccess', { channelName, viewerId: targetId });
+                  setPendingAccessRequests(prev => prev.filter(r => r.userId !== targetId));
+                  showToast('info', 'Declined viewer access request.');
+                }}
+                className="px-3 py-1.5 bg-zinc-850 hover:bg-zinc-850 text-zinc-400 font-bold text-[10px] rounded-lg transition cursor-pointer"
               >
                 Decline
               </button>

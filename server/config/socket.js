@@ -148,14 +148,16 @@ const initSocket = (server) => {
     });
 
     // ─── Live Streaming Socket Events ──────────────────────────────────────────
-    socket.on('goLive', async ({ hostId, hostName, hostAvatar, channelName, friends }) => {
+    socket.on('goLive', async ({ hostId, hostName, hostAvatar, channelName, friends, mode }) => {
       activeLiveStreams.set(channelName, {
         hostId,
         hostName,
         hostAvatar,
         channelName,
         viewersCount: 1,
-        coHosts: []
+        coHosts: [],
+        mode: mode || 'public',
+        approvedViewers: [String(hostId)] // host is always approved
       });
 
       let notifyList = friends;
@@ -204,12 +206,67 @@ const initSocket = (server) => {
       }
     });
 
+    socket.on('checkLiveAccess', ({ channelName, userId }) => {
+      const stream = activeLiveStreams.get(channelName);
+      if (!stream || stream.mode === 'public') {
+        socket.emit('liveAccessStatus', { approved: true });
+      } else {
+        const isApproved = (stream.approvedViewers || []).includes(String(userId));
+        socket.emit('liveAccessStatus', { approved: isApproved });
+      }
+    });
+
+    socket.on('requestLiveAccess', ({ channelName, userId, userName, userAvatar }) => {
+      const stream = activeLiveStreams.get(channelName);
+      if (stream) {
+        const hostSocketId = onlineUsers.get(stream.hostId);
+        if (hostSocketId) {
+          io.to(hostSocketId).emit('liveAccessRequestReceived', { userId, userName, userAvatar });
+        }
+      }
+    });
+
+    socket.on('approveLiveAccess', ({ channelName, viewerId }) => {
+      const stream = activeLiveStreams.get(channelName);
+      if (stream) {
+        if (!stream.approvedViewers) stream.approvedViewers = [];
+        if (!stream.approvedViewers.includes(String(viewerId))) {
+          stream.approvedViewers.push(String(viewerId));
+          activeLiveStreams.set(channelName, stream);
+        }
+      }
+      const viewerSocketId = onlineUsers.get(viewerId);
+      if (viewerSocketId) {
+        io.to(viewerSocketId).emit('liveAccessApproved', { channelName });
+      }
+    });
+
+    socket.on('declineLiveAccess', ({ channelName, viewerId }) => {
+      const viewerSocketId = onlineUsers.get(viewerId);
+      if (viewerSocketId) {
+        io.to(viewerSocketId).emit('liveAccessDeclined', { channelName });
+      }
+    });
+
     socket.on('joinLive', ({ channelName, userId, userName, userAvatar }) => {
+      const stream = activeLiveStreams.get(channelName);
+      if (stream && stream.mode === 'private') {
+        const isApproved = (stream.approvedViewers || []).includes(String(userId));
+        if (!isApproved) {
+          socket.emit('liveAccessRequired', { channelName });
+          
+          const hostSocketId = onlineUsers.get(stream.hostId);
+          if (hostSocketId) {
+            io.to(hostSocketId).emit('liveAccessRequestReceived', { userId, userName, userAvatar });
+          }
+          return;
+        }
+      }
+
       socket.join(`live_${channelName}`);
       socket.liveChannel = channelName;
       console.log(`📡 User joined live room: live_${channelName}`);
       
-      const stream = activeLiveStreams.get(channelName);
       if (stream) {
         stream.viewersCount = (stream.viewersCount || 0) + 1;
         activeLiveStreams.set(channelName, stream);

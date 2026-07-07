@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   FiMapPin, FiGlobe, FiCalendar, FiEdit2, FiMoreHorizontal,
   FiUserPlus, FiMessageCircle, FiCamera, FiGrid, FiList,
@@ -25,7 +25,8 @@ import { formatCount, fullDate, getAssetUrl } from '../utils/helpers';
 
 export default function ProfilePage() {
   const { userId } = useParams();
-  const { user: currentUser, posts, showToast, openConversation, acceptFriendRequest, rejectFriendRequest, loadFriendsData, updateCurrentUser } = useApp();
+  const navigate = useNavigate();
+  const { user: currentUser, posts, showToast, openConversation, acceptFriendRequest, rejectFriendRequest, loadFriendsData, updateCurrentUser, getLiveChannelForUser } = useApp();
   const { t } = useLanguage();
   const [profileUser, setProfileUser] = useState(null);
   const [userPosts, setUserPosts] = useState([]);
@@ -835,6 +836,28 @@ export default function ProfilePage() {
               onCancel={() => setCoverToCrop(null)} 
               saving={cropping}
             />
+          </div>
+        </div>
+      {/* Floating Profile Live Indicator at the bottom */}
+      {profileUser && getLiveChannelForUser && getLiveChannelForUser(profileUser._id || profileUser.id) && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-gradient-to-r from-pink-500 via-purple-600 to-red-500 rounded-2xl p-[1.5px] shadow-2xl animate-bounce pointer-events-auto max-w-[280px] w-full select-none text-white">
+          <div className="bg-sp-card border border-sp-border rounded-[15px] p-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 text-left min-w-0">
+              <span className="relative flex h-2 w-2 flex-shrink-0">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-red-600"></span>
+              </span>
+              <div className="truncate">
+                <p className="text-xs font-black text-sp-text leading-tight">Currently LIVE! 🎥</p>
+                <p className="text-[10px] text-sp-muted">Tap to watch broadcast</p>
+              </div>
+            </div>
+            <button 
+              onClick={() => navigate(`/live/${getLiveChannelForUser(profileUser._id || profileUser.id)}`)}
+              className="px-3.5 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold text-[10px] shadow transition active:scale-95 cursor-pointer flex-shrink-0"
+            >
+              Watch Now
+            </button>
           </div>
         </div>
       )}
