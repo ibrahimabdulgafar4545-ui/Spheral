@@ -111,7 +111,21 @@ router.post('/', protect, uploadStoryCreative, async (req, res, next) => {
     if (req.body.embed) {
       try { embed = JSON.parse(req.body.embed); } catch (e) { console.error('Failed to parse story embed', e); }
     }
-    const audioUrl = customAudioFile ? `/uploads/files/${customAudioFile.filename}` : (req.body.audioUrl || null);
+
+    let imagePath = null;
+    if (imageFile) {
+      imagePath = imageFile.path && imageFile.path.startsWith('http') 
+        ? imageFile.path 
+        : `/uploads/images/${imageFile.filename}`;
+    } else if (req.body.image) {
+      imagePath = req.body.image;
+    } else {
+      return res.status(400).json({ success: false, message: 'Please upload or provide an image for the story' });
+    }
+
+    const audioUrl = customAudioFile 
+      ? (customAudioFile.path && customAudioFile.path.startsWith('http') ? customAudioFile.path : `/uploads/files/${customAudioFile.filename}`) 
+      : (req.body.audioUrl || null);
 
     if (story) {
       // Add slide

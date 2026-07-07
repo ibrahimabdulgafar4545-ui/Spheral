@@ -187,7 +187,9 @@ router.post('/:id/upload', protect, uploadSingle, async (req, res, next) => {
     }
 
     const type = req.query.type || 'avatar';
-    const filePath = `/uploads/images/${req.file.filename}`;
+    const filePath = req.file.path && req.file.path.startsWith('http') 
+      ? req.file.path 
+      : `/uploads/images/${req.file.filename}`;
 
     const updateField = type === 'cover' ? { coverPhoto: filePath } : { avatar: filePath };
 

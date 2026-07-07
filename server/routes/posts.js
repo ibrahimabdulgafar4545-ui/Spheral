@@ -109,7 +109,9 @@ router.post('/', protect, uploadSingle, async (req, res, next) => {
 
     let imagePath = null;
     if (req.file) {
-      imagePath = `/uploads/images/${req.file.filename}`;
+      imagePath = req.file.path && req.file.path.startsWith('http') 
+        ? req.file.path 
+        : `/uploads/images/${req.file.filename}`;
     }
 
     const parsedTags = tags ? (Array.isArray(tags) ? tags : tags.split(',').map(t => t.trim())) : [];

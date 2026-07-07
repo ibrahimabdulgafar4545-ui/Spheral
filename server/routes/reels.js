@@ -48,14 +48,18 @@ router.post('/upload', protect, uploadReelCreative, async (req, res, next) => {
     if (!videoFile) {
       return res.status(400).json({ success: false, message: 'Please upload a video file' });
     }
-    const videoPath = `/uploads/files/${videoFile.filename}`;
+    const videoPath = videoFile.path && videoFile.path.startsWith('http') 
+      ? videoFile.path 
+      : `/uploads/files/${videoFile.filename}`;
     
     let overlays = [];
     if (req.body.overlays) {
       try { overlays = JSON.parse(req.body.overlays); } catch (e) { console.error('Failed to parse reel overlays', e); }
     }
 
-    const audioUrl = customAudioFile ? `/uploads/files/${customAudioFile.filename}` : (req.body.audioUrl || null);
+    const audioUrl = customAudioFile 
+      ? (customAudioFile.path && customAudioFile.path.startsWith('http') ? customAudioFile.path : `/uploads/files/${customAudioFile.filename}`) 
+      : (req.body.audioUrl || null);
 
     const reel = await Reel.create({
       author: req.user.id,

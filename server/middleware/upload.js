@@ -1,8 +1,10 @@
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const cloudinary = require('cloudinary').v2;
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
 
-// Ensure upload directories exist
+// Ensure upload directories exist for local fallback
 const uploadDirImages = path.join(__dirname, '..', 'uploads', 'images');
 const uploadDirFiles = path.join(__dirname, '..', 'uploads', 'files');
 
@@ -13,7 +15,40 @@ if (!fs.existsSync(uploadDirFiles)) {
   fs.mkdirSync(uploadDirFiles, { recursive: true });
 }
 
-const storage = multer.diskStorage({
+// --------------------------------------------------------------------------
+// CLOUDINARY SETUP (For free live hosting)
+// --------------------------------------------------------------------------
+let useCloudinary = false;
+if (process.env.CLOUDINARY_URL) {
+  useCloudinary = true;
+  // Cloudinary automatically configures itself if CLOUDINARY_URL is in .env
+}
+
+const cloudStorage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: async (req, file) => {
+    // Cloudinary folder and resource type
+    let folder = 'spheral/files';
+    let resource_type = 'auto'; // supports video, audio, image
+    if (file.mimetype.startsWith('image/')) {
+      folder = 'spheral/images';
+      resource_type = 'image';
+    } else if (file.mimetype.startsWith('video/')) {
+      folder = 'spheral/videos';
+      resource_type = 'video';
+    }
+    return {
+      folder: folder,
+      resource_type: resource_type,
+      // allowed_formats: ['jpeg', 'png', 'jpg', 'mp4', 'mov', 'webm', 'mp3'],
+    };
+  },
+});
+
+// --------------------------------------------------------------------------
+// LOCAL STORAGE SETUP (Fallback)
+// --------------------------------------------------------------------------
+const localStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) {
       cb(null, uploadDirImages);
@@ -44,13 +79,13 @@ const fileFilter = (req, file, cb) => {
 };
 
 const upload = multer({
-  storage: storage,
+  storage: useCloudinary ? cloudStorage : localStorage,
   fileFilter: fileFilter,
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit for images/audio
 });
 
 // Separate video upload with higher limit
-const videoStorage = multer.diskStorage({
+const videoLocalStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadDirFiles);
   },
@@ -70,7 +105,7 @@ const videoFilter = (req, file, cb) => {
 };
 
 const uploadVideoMulter = multer({
-  storage: videoStorage,
+  storage: useCloudinary ? cloudStorage : videoLocalStorage,
   fileFilter: videoFilter,
   limits: { fileSize: 200 * 1024 * 1024 }, // 200MB limit for videos
 });
