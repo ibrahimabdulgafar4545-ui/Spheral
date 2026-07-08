@@ -220,10 +220,19 @@ export default function CallOverlay({ callData, callState, onAccept, onDecline, 
         const pc = new RTCPeerConnection({
           iceServers: [
             { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun2.l.google.com:19302' }
+            { urls: 'stun:global.stun.twilio.com:3478' },
+            // Free TURN server (openrelay.metered.ca). Replace with your credentials if needed.
+            { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+            { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }
           ]
         });
+        // Connection state logging for debugging
+        pc.onconnectionstatechange = () => {
+          console.log('CallOverlay connection state:', pc.connectionState);
+        };
+        pc.oniceconnectionstatechange = () => {
+          console.log('CallOverlay ICE connection state:', pc.iceConnectionState);
+        };
         peerConnectionRef.current = pc;
 
         // 3. Add local tracks to PeerConnection
@@ -234,15 +243,16 @@ export default function CallOverlay({ callData, callState, onAccept, onDecline, 
         // 4. Handle remote track connection
         pc.ontrack = (event) => {
           console.log('Native WebRTC remote track added:', event.track.kind);
-          const stream = event.streams[0] || new MediaStream([event.track]);
-          
-          if (callData.video) {
+          const track = event.track;
+          if (track.kind === 'video') {
             if (remoteVideoRef.current) {
+              const stream = new MediaStream([track]);
               remoteVideoRef.current.srcObject = stream;
               remoteVideoRef.current.play().catch(e => console.log('Remote video autoplay blocked:', e));
             }
-          } else {
+          } else if (track.kind === 'audio') {
             if (remoteAudioRef.current) {
+              const stream = new MediaStream([track]);
               remoteAudioRef.current.srcObject = stream;
               remoteAudioRef.current.play().catch(e => console.log('Remote audio autoplay blocked:', e));
             }

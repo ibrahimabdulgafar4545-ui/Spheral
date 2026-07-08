@@ -1,0 +1,8 @@
+/* shakeFix.css – suppress unexpected animations on the Messages page */
+@media (prefers-reduced-motion: no-preference) {
+  /* Target the Messages layout wrapper and its children */
+  .MessagesLayoutWrapper *, .MessagesLayoutWrapper *::before, .MessagesLayoutWrapper *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

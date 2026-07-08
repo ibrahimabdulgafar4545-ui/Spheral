@@ -11,7 +11,9 @@ import TextInputWithEmoji from '../components/ui/TextInputWithEmoji';
 const ICE_SERVERS = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:global.stun.twilio.com:3478' }
+    // Free TURN server (openrelay.metered.ca)
+    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }
   ]
 };
 
@@ -353,7 +355,19 @@ export default function LiveStreamPage() {
 
       let pc = peerConnections.current['host'];
       if (!pc) {
-        pc = new RTCPeerConnection(ICE_SERVERS);
+        pc = new RTCPeerConnection({
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }
+          ]
+        });
+        // Debug connection state changes
+        pc.onconnectionstatechange = () => {
+          console.log('LiveStreamPage connection state:', pc.connectionState);
+        };
+        pc.oniceconnectionstatechange = () => {
+          console.log('LiveStreamPage ICE connection state:', pc.iceConnectionState);
+        };
         peerConnections.current['host'] = pc;
 
         // Receive host stream

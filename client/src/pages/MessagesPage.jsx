@@ -17,6 +17,7 @@ import VerifiedBadge from '../components/ui/VerifiedBadge';
 import ReactionPicker from '../components/ui/ReactionPicker';
 import { getReactionIcon } from '../components/ui/ReactionIcons';
 import { useLanguage } from '../context/LanguageContext';
+import '../styles/shakeFix.css';
 
 const EMOJIS = [
   '👍', '❤️', '😆', '😮', '😢', '😡', '😂', '🔥', '👏', '🎉',
