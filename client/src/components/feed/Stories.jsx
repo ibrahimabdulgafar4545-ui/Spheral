@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
-import { FiPlus, FiX, FiChevronLeft, FiChevronRight, FiHeart, FiVolume2, FiVolumeX } from 'react-icons/fi';
+import { FiPlus, FiX, FiChevronLeft, FiChevronRight, FiHeart, FiVolume2, FiVolumeX, FiTrash2 } from 'react-icons/fi';
 import { useApp } from '../../context/AppContext';
 import { timeAgo, getAssetUrl, parseMentions } from '../../utils/helpers';
 import { usersAPI } from '../../api/users';
@@ -287,6 +287,47 @@ function StoryViewer({ stories, initialIndex, onClose }) {
     }
   };
 
+  const handleDeleteSlide = async (e) => {
+    e.stopPropagation();
+    if (!story || !activeSlide) return;
+    if (!window.confirm("Are you sure you want to delete this story slide?")) return;
+
+    try {
+      const slideId = activeSlide._id || activeSlide.id;
+      const res = await storiesAPI.deleteSlide(slideId);
+      if (res.success) {
+        // Update localStories state
+        const updatedStories = localStories.map((s, idx) => {
+          if (idx === si) {
+            const remainingSlides = s.slides.filter(sl => (sl._id || sl.id) !== slideId);
+            return { ...s, slides: remainingSlides };
+          }
+          return s;
+        }).filter(s => s.slides.length > 0); // remove story if it has no slides left
+
+        if (updatedStories.length === 0) {
+          // If no stories left at all, close viewer
+          onClose();
+        } else {
+          setLocalStories(updatedStories);
+          // Adjust indices to prevent out of bounds
+          if (si >= updatedStories.length) {
+            setSi(updatedStories.length - 1);
+            setSlide(0);
+          } else {
+            const currentDeck = updatedStories[si];
+            if (slide >= currentDeck.slides.length) {
+              setSlide(Math.max(0, currentDeck.slides.length - 1));
+            }
+          }
+          setProgress(0);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to delete story slide:', err);
+    }
+  };
+
   // Auto-advance progress timer
   useEffect(() => {
     setProgress(0);
@@ -478,14 +519,26 @@ function StoryViewer({ stories, initialIndex, onClose }) {
         ))}
 
         {/* User info */}
-        <div className="absolute top-8 left-3 right-3 z-20 flex items-center gap-2.5">
-          <div className="story-ring">
-            <Avatar src={story.user?.avatar} alt={story.user?.name} className="w-10 h-10 ring-2 ring-black rounded-full" />
+        <div className="absolute top-8 left-3 right-3 z-20 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="story-ring">
+              <Avatar src={story.user?.avatar} alt={story.user?.name} className="w-10 h-10 ring-2 ring-black rounded-full" />
+            </div>
+            <div>
+              <p className="text-white font-semibold text-sm drop-shadow">{story.user?.name}</p>
+              <p className="text-white/60 text-xs">{timeAgo(activeSlide?.createdAt || story.createdAt)}</p>
+            </div>
           </div>
-          <div>
-            <p className="text-white font-semibold text-sm drop-shadow">{story.user?.name}</p>
-            <p className="text-white/60 text-xs">{timeAgo(activeSlide?.createdAt || story.createdAt)}</p>
-          </div>
+          
+          {String(story.user?._id || story.user?.id || story.user) === String(currentUser?.id || currentUser?._id) && (
+            <button
+              onClick={handleDeleteSlide}
+              className="w-8 h-8 rounded-full bg-red-600/20 hover:bg-red-600/40 text-red-500 border border-red-500/30 flex items-center justify-center transition-colors pointer-events-auto cursor-pointer"
+              title="Delete Slide"
+            >
+              <FiTrash2 size={14} />
+            </button>
+          )}
         </div>
 
         {/* Click zones */}

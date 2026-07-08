@@ -246,4 +246,39 @@ router.put('/:storyId/slides/:slideId/like', protect, async (req, res, next) => 
   }
 });
 
+// @desc    Delete a specific slide from current user's story
+// @route   DELETE /api/stories/slides/:slideId
+// @access  Protected
+router.delete('/slides/:slideId', protect, async (req, res, next) => {
+  try {
+    const { slideId } = req.params;
+    const myId = req.user.id;
+
+    // Find the story containing the slide
+    const story = await Story.findOne({ 'slides._id': slideId });
+    if (!story) {
+      return res.status(404).json({ success: false, message: 'Story slide not found' });
+    }
+
+    // Verify ownership
+    if (story.user.toString() !== myId) {
+      return res.status(403).json({ success: false, message: 'Not authorized to delete this story' });
+    }
+
+    // Pull the slide from the slides array
+    story.slides.pull({ _id: slideId });
+
+    if (story.slides.length === 0) {
+      // If no slides left, delete the entire story document
+      await Story.findByIdAndDelete(story._id);
+    } else {
+      await story.save();
+    }
+
+    res.status(200).json({ success: true, message: 'Story slide deleted successfully' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
