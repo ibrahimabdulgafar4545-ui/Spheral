@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
-import { FiUsers, FiX, FiSend, FiVideo, FiMic, FiMicOff, FiVideoOff } from 'react-icons/fi';
+import { FiUsers, FiX, FiSend, FiVideo, FiMic, FiMicOff, FiVideoOff, FiMessageSquare } from 'react-icons/fi';
 import { useApp } from '../context/AppContext';
 import { reelsAPI } from '../api/reels';
 import Avatar from '../components/ui/Avatar';
@@ -34,6 +34,7 @@ export default function LiveStreamPage() {
   const [streamEnded, setStreamEnded] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [savingReel, setSavingReel] = useState(false);
+  const [showMobileChat, setShowMobileChat] = useState(true);
 
   // Co-Host Requests & Duration & Moderation States
   const [coHostStatus, setCoHostStatus] = useState('idle'); // 'idle' | 'requesting' | 'approved' | 'declined'
@@ -812,7 +813,7 @@ export default function LiveStreamPage() {
 
         {/* Floating request button for viewers */}
         {!isHost && (
-          <div className="absolute bottom-4 right-4 z-20">
+          <div className={`absolute transition-all duration-300 z-20 md:bottom-4 ${showMobileChat ? 'bottom-[calc(40vh+16px)] right-4' : 'bottom-4 right-4'}`}>
             {coHostStatus === 'idle' && (
               <button 
                 onClick={() => {
@@ -841,7 +842,7 @@ export default function LiveStreamPage() {
 
         {/* Pending Co-Host Approval Request banner for Host */}
         {isHost && pendingRequests.length > 0 && (
-          <div className="absolute bottom-20 left-4 right-4 md:left-1/2 md:right-auto md:-translate-x-1/2 bg-zinc-900 border border-zinc-800 rounded-2xl p-4 shadow-2xl z-30 max-w-sm w-full flex items-center justify-between gap-4 animate-bounce pointer-events-auto">
+          <div className={`absolute left-4 right-4 md:left-1/2 md:right-auto md:-translate-x-1/2 bg-zinc-900 border border-zinc-800 rounded-2xl p-4 shadow-2xl z-30 max-w-sm w-full flex items-center justify-between gap-4 animate-bounce pointer-events-auto transition-all duration-300 md:bottom-20 ${showMobileChat ? 'bottom-[calc(40vh+80px)]' : 'bottom-20'}`}>
             <div className="flex items-center gap-3">
               <Avatar src={pendingRequests[0].userAvatar} alt={pendingRequests[0].userName} size="sm" />
               <div className="text-left">
@@ -878,7 +879,7 @@ export default function LiveStreamPage() {
 
         {/* Pending Viewer Access Requests for Private Live Stream (Host Only) */}
         {isHost && pendingAccessRequests.length > 0 && (
-          <div className="absolute bottom-36 left-4 right-4 md:left-1/2 md:right-auto md:-translate-x-1/2 bg-zinc-900 border border-zinc-800 rounded-2xl p-4 shadow-2xl z-30 max-w-sm w-full flex items-center justify-between gap-4 animate-bounce pointer-events-auto">
+          <div className={`absolute left-4 right-4 md:left-1/2 md:right-auto md:-translate-x-1/2 bg-zinc-900 border border-zinc-800 rounded-2xl p-4 shadow-2xl z-30 max-w-sm w-full flex items-center justify-between gap-4 animate-bounce pointer-events-auto transition-all duration-300 md:bottom-36 ${showMobileChat ? 'bottom-[calc(40vh+140px)]' : 'bottom-36'}`}>
             <div className="flex items-center gap-3">
               <Avatar src={pendingAccessRequests[0].userAvatar} alt={pendingAccessRequests[0].userName} size="sm" />
               <div className="text-left">
@@ -929,18 +930,29 @@ export default function LiveStreamPage() {
             </span>
           </div>
 
-          <button
-            onClick={() => isHost ? handleEndStream() : navigate('/')}
-            className="w-9 h-9 rounded-full bg-black/45 hover:bg-black/75 backdrop-blur text-white flex items-center justify-center transition pointer-events-auto"
-            title="Leave / End stream"
-          >
-            <FiX size={18} />
-          </button>
+          <div className="flex items-center gap-2 pointer-events-auto">
+            {/* Chat toggle button for mobile */}
+            <button
+              onClick={() => setShowMobileChat(prev => !prev)}
+              className={`md:hidden w-9 h-9 rounded-full backdrop-blur text-white flex items-center justify-center transition ${showMobileChat ? 'bg-sp-blue hover:bg-blue-600' : 'bg-black/45 hover:bg-black/75'}`}
+              title="Toggle Live Chat"
+            >
+              <FiMessageSquare size={16} />
+            </button>
+
+            <button
+              onClick={() => isHost ? handleEndStream() : navigate('/')}
+              className="w-9 h-9 rounded-full bg-black/45 hover:bg-black/75 backdrop-blur text-white flex items-center justify-center transition"
+              title="Leave / End stream"
+            >
+              <FiX size={18} />
+            </button>
+          </div>
         </div>
 
         {/* Bottom controls panel for Host */}
         {isHost && (
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-4 z-10">
+          <div className={`absolute left-1/2 -translate-x-1/2 flex items-center gap-4 z-10 transition-all duration-300 md:bottom-4 ${showMobileChat ? 'bottom-[calc(40vh+16px)]' : 'bottom-4'}`}>
             <button
               onClick={toggleMic}
               className={`w-12 h-12 rounded-full flex items-center justify-center transition shadow-lg
@@ -966,7 +978,9 @@ export default function LiveStreamPage() {
       </div>
 
       {/* ─── Live Comments & Chat sidebar ─────────────────────── */}
-      <div className="w-full md:w-80 h-72 md:h-full bg-zinc-900 border-t md:border-t-0 md:border-l border-zinc-800 flex flex-col z-10">
+      <div className={`w-full border-zinc-800 flex flex-col z-10 transition-all duration-300
+        md:w-80 md:h-full md:border-l md:border-t-0 md:relative md:bg-zinc-900
+        ${showMobileChat ? 'absolute bottom-0 left-0 right-0 h-[40vh] bg-zinc-950/85 backdrop-blur-md border-t rounded-t-3xl shadow-2xl' : 'hidden md:flex'}`}>
         <div className="px-4 py-3 border-b border-zinc-800 flex-shrink-0">
           <h3 className="font-bold text-white text-sm">Live Comments</h3>
         </div>

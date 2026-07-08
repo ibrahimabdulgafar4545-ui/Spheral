@@ -47,7 +47,7 @@ const formatMessageTimeBlock = (date) => {
 
 const MessagesLayoutWrapper = ({ isMobileChatActive, children }) => {
   return isMobileChatActive ? (
-    <div className="fixed inset-0 z-50 bg-sp-bg flex flex-col h-screen h-[100dvh] pb-0">{children}</div>
+    <div className="fixed inset-0 z-50 bg-sp-bg flex flex-col pb-[env(safe-area-inset-bottom,0px)]">{children}</div>
   ) : (
     <MainLayout hideRight>{children}</MainLayout>
   );
@@ -473,7 +473,7 @@ export default function MessagesPage() {
   return (
     <MessagesLayoutWrapper isMobileChatActive={isMobileChatActive}>
       <div className={isMobileChatActive 
-        ? "w-full h-full flex bg-sp-card select-none"
+        ? "w-full h-full min-h-0 flex bg-sp-card select-none"
         : "max-w-[1000px] mx-auto w-full h-[calc(100vh-9.5rem)] h-[calc(100dvh-9.5rem)] md:h-[calc(100vh-6rem)] md:h-[calc(100dvh-6rem)] min-h-[400px] md:min-h-[500px] flex rounded-2xl border border-sp-border bg-sp-card overflow-hidden shadow-card-lg select-none mb-[env(safe-area-inset-bottom,0px)]"
       }>
         
@@ -544,7 +544,7 @@ export default function MessagesPage() {
         </div>
 
         {/* RIGHT PANEL: Open Chat details */}
-        <div className={`flex-1 flex flex-col min-w-0 bg-sp-bg/25 ${!activeChat ? 'hidden md:flex items-center justify-center' : 'flex'}`}>
+        <div className={`flex-1 flex flex-col h-full min-h-0 min-w-0 bg-sp-bg/25 ${!activeChat ? 'hidden md:flex items-center justify-center' : 'flex'}`}>
           {activeChat ? 
             <>
               {/* Header */}
