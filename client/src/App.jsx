@@ -4,6 +4,7 @@ import { ToastContainer } from './components/ui/Toast';
 import ChatBox from './components/ui/ChatBox';
 import CallOverlay from './components/chat/CallOverlay';
 import CreativeEditor from './components/ui/CreativeEditor';
+import PwaPrompt from './components/ui/PwaPrompt';
 
 // Pages
 import LoginPage from './pages/LoginPage';
@@ -145,6 +146,9 @@ function MainApp() {
         isOpen={showVerificationCelebration}
         onClose={closeVerificationCelebration}
       />
+
+      {/* PWA Update, Install and Notification Prompts */}
+      <PwaPrompt />
     </>
   );
 }
