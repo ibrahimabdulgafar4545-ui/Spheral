@@ -3,7 +3,29 @@ const User = require('../models/User');
 const Message = require('../models/Message');
 
 // userId (string) -> Set of socketId (strings)
-const onlineUsers = new Map();
+// Custom Map subclass to support io.to(Set) in routes by returning a custom Array with Set methods
+class OnlineUsersMap extends Map {
+  get(key) {
+    const val = super.get(key);
+    if (!val) return undefined;
+    const arr = Array.from(val);
+    arr.add = (item) => {
+      val.add(item);
+      if (!arr.includes(item)) arr.push(item);
+    };
+    arr.delete = (item) => {
+      val.delete(item);
+      const idx = arr.indexOf(item);
+      if (idx > -1) arr.splice(idx, 1);
+    };
+    Object.defineProperty(arr, 'size', {
+      get: () => val.size,
+      configurable: true
+    });
+    return arr;
+  }
+}
+const onlineUsers = new OnlineUsersMap();
 // channelName -> { hostId, hostName, hostAvatar, channelName, viewersCount, mode, freeJoinLimit, approvedViewers: Set<string> }
 const activeLiveStreams = new Map();
 
@@ -45,7 +67,7 @@ const initSocket = (server) => {
       console.log(`👤 User ${socket.userId} joined on socket ${socket.id} (total sockets: ${onlineUsers.get(socket.userId).size})`);
 
       try {
-        const user = await User.findById(userId).select('blockedUsers');
+        const user = await User.findById(userId).select('blockedUsers friends');
         if (!user) return;
 
         // Set online status in DB
@@ -57,6 +79,7 @@ const initSocket = (server) => {
           ...usersWhoBlockedMe.map(u => String(u._id))
         ]);
 
+        // 1. Notify other online friends that I'm online
         for (const [otherUserId, otherSocketIds] of onlineUsers.entries()) {
           if (!excludedIds.has(otherUserId) && otherUserId !== socket.userId) {
             for (const otherSid of otherSocketIds) {
@@ -64,6 +87,41 @@ const initSocket = (server) => {
             }
           }
         }
+
+        // 2. Send the connecting user the list of all currently online users
+        const onlineIdsList = Array.from(onlineUsers.keys());
+        socket.emit('initialOnlineUsers', { onlineIds: onlineIdsList });
+
+        // 3. Auto-notify the connecting user if any of their friends are currently LIVE
+        const myFriendIds = (user.friends || []).map(id => String(id));
+        for (const [channelName, stream] of activeLiveStreams.entries()) {
+          if (myFriendIds.includes(String(stream.hostId))) {
+            socket.emit('friendWentLive', {
+              hostId: String(stream.hostId),
+              hostName: stream.hostName,
+              hostAvatar: stream.hostAvatar,
+              channelName: stream.channelName,
+              mode: stream.mode,
+              freeJoinLimit: stream.freeJoinLimit
+            });
+          }
+        }
+
+        // 4. Update all pending 'sent' messages to 'delivered' and notify senders
+        const undeliveredMessages = await Message.find({ receiver: userId, status: 'sent' });
+        if (undeliveredMessages.length > 0) {
+          await Message.updateMany({ receiver: userId, status: 'sent' }, { $set: { status: 'delivered' } });
+          for (const msg of undeliveredMessages) {
+            const senderSids = getUserSocketIds(msg.sender);
+            for (const sid of senderSids) {
+              io.to(sid).emit('messageDeliveredNotify', {
+                messageId: String(msg._id),
+                conversationId: String(msg.conversation)
+              });
+            }
+          }
+        }
+
       } catch (err) {
         console.error('Error setting user online:', err);
       }
@@ -104,9 +162,37 @@ const initSocket = (server) => {
       }
     });
 
+    socket.on('messageDelivered', async ({ messageId, senderId, conversationId }) => {
+      try {
+        await Message.findByIdAndUpdate(messageId, { $set: { status: 'delivered' } });
+        const senderSids = getUserSocketIds(senderId);
+        for (const sid of senderSids) {
+          io.to(sid).emit('messageDeliveredNotify', { messageId, conversationId });
+        }
+      } catch (err) {
+        console.error('Error handling messageDelivered:', err);
+      }
+    });
+
     // ─── Call signaling ───────────────────────────────────────────────────────
-    socket.on('makeCall', ({ targetId, channelName, video, callerName, callerAvatar }) => {
+    socket.on('makeCall', async ({ targetId, channelName, video, callerName, callerAvatar }) => {
       const sids = getUserSocketIds(targetId);
+      
+      // If the recipient has no active sockets, immediately log a missed call notification
+      if (!sids || sids.size === 0) {
+        try {
+          const Notification = require('../models/Notification');
+          await Notification.create({
+            recipient: targetId,
+            actor: socket.userId,
+            type: 'call_missed',
+            content: `tried to ${video ? 'video' : 'audio'} call you.`,
+          });
+        } catch (err) {
+          console.error('Error creating missed call notification:', err);
+        }
+      }
+
       for (const sid of sids) {
         io.to(sid).emit('incomingCall', {
           callerId: socket.userId,

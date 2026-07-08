@@ -366,11 +366,50 @@ export function AppProvider({ children }) {
         });
       });
 
+      // Initial online users list received from server
+      socketInstance.on('initialOnlineUsers', ({ onlineIds }) => {
+        const onlineSet = new Set(onlineIds.map(String));
+        dispatch({
+          type: Actions.SET_FRIENDS_DATA,
+          payload: {
+            friends: friendsListRef.current.map(f => {
+              const fid = String(f.id || f._id);
+              return { ...f, isOnline: onlineSet.has(fid) };
+            })
+          }
+        });
+        setConversations(prev => prev.map(c => {
+          if (c.friend) {
+            const fid = String(c.friend.id || c.friend._id);
+            return {
+              ...c,
+              friend: { ...c.friend, isOnline: onlineSet.has(fid) }
+            };
+          }
+          return c;
+        }));
+        setActiveChat(prev => {
+          if (prev) {
+            const fid = String(prev.id || prev._id);
+            return { ...prev, isOnline: onlineSet.has(fid) };
+          }
+          return prev;
+        });
+      });
+
       // Receive DMs
       socketInstance.on('receiveMessage', (message) => {
         const currentActiveChat = activeChatRef.current;
         const activeChatId = currentActiveChat?.id || currentActiveChat?._id;
         const currentUser = userRef.current;
+
+        // Emit messageDelivered confirmation back to the server
+        socketInstance.emit('messageDelivered', {
+          messageId: message._id || message.id,
+          senderId: message.sender.id || message.sender._id || message.sender,
+          conversationId: message.conversation?._id || message.conversation?.id || message.conversation
+        });
+
         if (currentActiveChat && (activeChatId === message.sender.id || activeChatId === message.sender._id)) {
           setChatMessages((prev) => {
             const exists = prev.some(m => (m._id || m.id).toString() === (message._id || message.id).toString());
@@ -406,9 +445,27 @@ export function AppProvider({ children }) {
         loadUnreadMessageCount();
       });
 
+      socketInstance.on('messageDeliveredNotify', ({ messageId, conversationId }) => {
+        setChatMessages((prev) =>
+          prev.map((m) => {
+            const mId = m._id || m.id;
+            if (String(mId) === String(messageId)) {
+              return { ...m, status: 'delivered' };
+            }
+            return m;
+          })
+        );
+      });
+
       socketInstance.on('messagesSeen', ({ conversationId }) => {
         setChatMessages((prev) =>
-          prev.map((m) => (m.conversation === conversationId ? { ...m, status: 'seen' } : m))
+          prev.map((m) => {
+            const mConvId = m.conversation?._id || m.conversation?.id || m.conversation;
+            if (String(mConvId) === String(conversationId)) {
+              return { ...m, status: 'seen' };
+            }
+            return m;
+          })
         );
         loadUnreadMessageCount();
       });
