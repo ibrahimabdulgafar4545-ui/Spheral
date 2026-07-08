@@ -76,13 +76,16 @@ router.post('/', protect, uploadStoryCreative, async (req, res, next) => {
 
     let imagePath = null;
     if (imageFile) {
-      imagePath = imageFile.path && imageFile.path.startsWith('http') 
-        ? imageFile.path 
-        : `/uploads/images/${imageFile.filename}`;
+      if (imageFile.path && imageFile.path.startsWith('http')) {
+        imagePath = imageFile.path;
+      } else {
+        const subFolder = imageFile.mimetype.startsWith('image/') ? 'images' : 'files';
+        imagePath = `/uploads/${subFolder}/${imageFile.filename}`;
+      }
     } else if (req.body.image) {
       imagePath = req.body.image;
     } else {
-      return res.status(400).json({ success: false, message: 'Please upload or provide an image for the story' });
+      return res.status(400).json({ success: false, message: 'Please upload or provide a media file (image or video) for the story' });
     }
 
     const slideDuration = parseInt(duration, 10) || 5000;

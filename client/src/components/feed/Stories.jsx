@@ -77,7 +77,7 @@ export default function Stories() {
               ref={fileInputRef}
               onChange={handleFileChange}
               className="hidden"
-              accept="image/*"
+              accept="image/*,video/*"
             />
             <div className="absolute inset-0 flex flex-col items-center justify-center">
               <Avatar
@@ -194,13 +194,31 @@ function StoryViewer({ stories, initialIndex, onClose }) {
   const [slide, setSlide] = useState(0);
   const [progress, setProgress] = useState(0);
   
+  const [videoDuration, setVideoDuration] = useState(null);
+  
   const story = localStories[si];
   const activeSlide = story?.slides[slide];
   const isLiked = activeSlide?.likes?.includes(currentUser?.id || currentUser?._id);
-  const duration = activeSlide?.duration || 5000;
   const [muted, setMuted] = useState(false);
 
+  const mediaUrl = activeSlide?.image;
+  const isVideo = mediaUrl && ['mp4', 'mov', 'webm', 'ogg', 'mkv', 'avi'].includes(mediaUrl.split('.').pop().toLowerCase());
+
+  const duration = isVideo
+    ? (videoDuration || activeSlide?.duration || 10000)
+    : (activeSlide?.duration || 5000);
+
   const audioRef = useRef(new Audio());
+
+  useEffect(() => {
+    setVideoDuration(null);
+  }, [si, slide]);
+
+  const handleVideoLoadedMetadata = (e) => {
+    if (e.target && e.target.duration) {
+      setVideoDuration(e.target.duration * 1000);
+    }
+  };
 
   useEffect(() => {
     return () => {
@@ -348,13 +366,33 @@ function StoryViewer({ stories, initialIndex, onClose }) {
           ))}
         </div>
 
-        {/* Image */}
-        <img
-          src={getAssetUrl(activeSlide?.image)}
-          alt=""
-          className="w-full h-full object-cover"
-          key={`${si}-${slide}`}
-        />
+        {/* Media (Image or Video) */}
+        {(() => {
+          const mediaUrl = activeSlide?.image;
+          const isVideo = mediaUrl && ['mp4', 'mov', 'webm', 'ogg', 'mkv', 'avi'].includes(mediaUrl.split('.').pop().toLowerCase());
+          
+          if (isVideo) {
+            return (
+              <video
+                src={getAssetUrl(mediaUrl)}
+                className="w-full h-full object-cover"
+                autoPlay
+                playsInline
+                muted={muted}
+                key={`${si}-${slide}`}
+                onLoadedMetadata={handleVideoLoadedMetadata}
+              />
+            );
+          }
+          return (
+            <img
+              src={getAssetUrl(mediaUrl)}
+              alt=""
+              className="w-full h-full object-cover"
+              key={`${si}-${slide}`}
+            />
+          );
+        })()}
         <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-transparent to-black/30" />
 
         {/* Embedded Post/Reel card */}

@@ -41,7 +41,7 @@ const SOUNDS_LIBRARY = [
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function ReelsPage() {
   const { t } = useLanguage();
-  const { user, showToast, shareToStory, socket } = useApp();
+  const { user, showToast, shareToStory, socket, getLiveChannelForUser } = useApp();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [reels, setReels]         = useState([]);
@@ -478,6 +478,7 @@ export default function ReelsPage() {
                 onDelete={() => handleDelete(reel.id || reel._id)}
                 muted={reelsMuted}
                 setMuted={setReelsMuted}
+                getLiveChannelForUser={getLiveChannelForUser}
               />
             ))}
           </div>
@@ -797,7 +798,7 @@ export default function ReelsPage() {
 }
 
 // ─── Individual Reel Item ─────────────────────────────────────────────────────
-function ReelItem({ reel, currentUser, isActive, onVisible, onLike, onSave, onComment, onShare, onDownload, onCopyLink, onNotInterested, onDelete, muted, setMuted }) {
+function ReelItem({ reel, currentUser, isActive, onVisible, onLike, onSave, onComment, onShare, onDownload, onCopyLink, onNotInterested, onDelete, muted, setMuted, getLiveChannelForUser }) {
   const videoRef = useRef(null);
   const itemRef  = useRef(null);
   const menuRef  = useRef(null);
@@ -1092,6 +1093,8 @@ function ReelItem({ reel, currentUser, isActive, onVisible, onLike, onSave, onCo
     const authorId = reel.author?._id || reel.author?.id;
     if (authorId) navigate(`/profile/${authorId}`);
   };
+  const authorId = reel.author?._id || reel.author?.id;
+  const isLive = getLiveChannelForUser ? !!getLiveChannelForUser(authorId) : false;
 
   // Three-dot menu definition
   const menuItems = [
@@ -1197,6 +1200,9 @@ function ReelItem({ reel, currentUser, isActive, onVisible, onLike, onSave, onCo
               title="View Profile"
             >
               <Avatar src={reel.author?.avatar} alt={reel.author?.name} className="w-full h-full" />
+              {isLive && (
+                <span className="absolute top-0 right-0 w-3 h-3 bg-red-500 rounded-full border-2 border-white animate-pulse" title="Live"></span>
+              )}
             </button>
             {!isOwner && !followed && (
               <button

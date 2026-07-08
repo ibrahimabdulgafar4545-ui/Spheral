@@ -233,14 +233,18 @@ export default function CallOverlay({ callData, callState, onAccept, onDecline, 
 
         // 4. Handle remote track connection
         pc.ontrack = (event) => {
-          console.log('Native WebRTC remote track added:', event.streams[0]);
+          console.log('Native WebRTC remote track added:', event.track.kind);
+          const stream = event.streams[0] || new MediaStream([event.track]);
+          
           if (callData.video) {
-            if (remoteVideoRef.current && event.streams[0]) {
-              remoteVideoRef.current.srcObject = event.streams[0];
+            if (remoteVideoRef.current) {
+              remoteVideoRef.current.srcObject = stream;
+              remoteVideoRef.current.play().catch(e => console.log('Remote video autoplay blocked:', e));
             }
           } else {
-            if (remoteAudioRef.current && event.streams[0]) {
-              remoteAudioRef.current.srcObject = event.streams[0];
+            if (remoteAudioRef.current) {
+              remoteAudioRef.current.srcObject = stream;
+              remoteAudioRef.current.play().catch(e => console.log('Remote audio autoplay blocked:', e));
             }
           }
         };
