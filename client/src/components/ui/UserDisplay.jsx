@@ -2,6 +2,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import Avatar from './Avatar';
 import VerifiedBadge from './VerifiedBadge';
+import { useApp } from '../../context/AppContext';
 
 export default function UserDisplay({
   user,
@@ -16,11 +17,14 @@ export default function UserDisplay({
   children,
   subText,
 }) {
+  const { getLiveChannelForUser } = useApp();
+
   if (!user) return null;
 
   const userId = user._id || user.id;
   const profileLink = typeof link === 'string' ? link : `/profile/${userId}`;
   const isLink = !!link && !!userId;
+  const liveChannel = getLiveChannelForUser(userId);
 
   // Determine sizing values
   const avatarSizes = {
@@ -55,6 +59,7 @@ export default function UserDisplay({
           alt={user.name}
           className={`${avatarSizes[size]} ${avatarClassName}`}
           online={user.isOnline}
+          liveChannel={liveChannel}
         />
       )}
       {!hideName && (

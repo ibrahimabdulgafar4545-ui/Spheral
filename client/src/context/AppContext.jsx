@@ -496,12 +496,12 @@ export function AppProvider({ children }) {
         showToast('error', `Call failed: ${reason}`);
       });
 
-      socketInstance.on('friendWentLive', ({ hostId, hostName, hostAvatar, channelName }) => {
-        showToast('info', `${hostName} is live now! Click here to join.`);
+      socketInstance.on('friendWentLive', ({ hostId, hostName, hostAvatar, channelName, mode }) => {
+        showToast('info', `${hostName} is live now! Tap to join.`);
         loadNotifications();
         setActiveLiveStreams(prev => {
           if (!prev.find(stream => stream.channelName === channelName)) {
-            return [{ hostId, hostName, hostAvatar, channelName }, ...prev];
+            return [{ hostId: String(hostId), hostName, hostAvatar, channelName, mode: mode || 'public' }, ...prev];
           }
           return prev;
         });
@@ -1171,10 +1171,14 @@ export function AppProvider({ children }) {
 
   const getLiveChannelForUser = (userId) => {
     if (!activeLiveStreams || !userId) return null;
-    const stream = activeLiveStreams.find(
-      (s) => String(s.hostId) === String(userId)
-    );
+    const stream = activeLiveStreams.find(s => String(s.hostId) === String(userId));
     return stream ? stream.channelName : null;
+  };
+
+  // Returns full stream object (includes mode) or null
+  const getLiveStreamForUser = (userId) => {
+    if (!activeLiveStreams || !userId) return null;
+    return activeLiveStreams.find(s => String(s.hostId) === String(userId)) || null;
   };
 
   const unreadNotifCount = (state.notifications || []).filter(n => !n.read).length;
@@ -1184,6 +1188,7 @@ export function AppProvider({ children }) {
     <AppContext.Provider value={{
       ...state,
       getLiveChannelForUser,
+      getLiveStreamForUser,
       login, signup, logout,
       sendCode, verifyCode,
       loadFeed, addPost, toggleLike, reactPost, deletePost, archivePost,

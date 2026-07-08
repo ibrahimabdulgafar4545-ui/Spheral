@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getAssetUrl } from '../../utils/helpers';
+import { useApp } from '../../context/AppContext';
 
 const COLORS = [
   'bg-red-500', 'bg-orange-500', 'bg-amber-500', 'bg-green-500', 
@@ -26,6 +27,23 @@ function getColor(str) {
 export default function Avatar({ src, alt = '', size = 'md', online = false, className = '', ring = false, liveChannel = null }) {
   const [error, setError] = useState(false);
   const navigate = useNavigate();
+  const appContext = useApp();
+
+  let resolvedLiveChannel = liveChannel;
+  if (!resolvedLiveChannel && appContext?.activeLiveStreams) {
+    const matchedStream = appContext.activeLiveStreams.find(s => {
+      if (src && s.hostAvatar && (s.hostAvatar.includes(src) || src.includes(s.hostAvatar))) {
+        return true;
+      }
+      if (alt && s.hostName && s.hostName.toLowerCase().trim() === alt.toLowerCase().trim()) {
+        return true;
+      }
+      return false;
+    });
+    if (matchedStream) {
+      resolvedLiveChannel = matchedStream.channelName;
+    }
+  }
 
   const sizes = {
     xs: 'w-6 h-6 text-[10px]',
@@ -51,10 +69,10 @@ export default function Avatar({ src, alt = '', size = 'md', online = false, cla
   const bgColor = getColor(alt);
 
   const handleClick = (e) => {
-    if (liveChannel) {
+    if (resolvedLiveChannel) {
       e.stopPropagation();
       e.preventDefault();
-      navigate(`/live/${liveChannel}`);
+      navigate(`/live/${resolvedLiveChannel}`);
     }
   };
 
@@ -72,7 +90,7 @@ export default function Avatar({ src, alt = '', size = 'md', online = false, cla
           className={`${sizes[size] || sizes.md} rounded-full object-cover ${ring ? 'ring-2 ring-sp-blue/40' : ''}`}
         />
       )}
-      {online && !liveChannel && (
+      {online && !resolvedLiveChannel && (
         <div
           className={`${dotSizes[size] || dotSizes.md} absolute bottom-0 right-0 rounded-full bg-green-400 ${size === '32' ? '' : 'border-2'} border-sp-card`}
         />
@@ -80,7 +98,7 @@ export default function Avatar({ src, alt = '', size = 'md', online = false, cla
     </div>
   );
 
-  if (liveChannel) {
+  if (resolvedLiveChannel) {
     return (
       <div 
         onClick={handleClick} 

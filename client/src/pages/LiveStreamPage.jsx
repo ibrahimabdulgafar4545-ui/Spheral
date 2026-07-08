@@ -276,13 +276,27 @@ export default function LiveStreamPage() {
           userAvatar: user.avatar
         });
 
-        // 3. Handle incoming viewers (guests)
+        // 3. Remove stale listeners before adding new ones
+        socket.off('hostInitiateWebrtc');
+        socket.off('receiveWebrtcAnswer');
+        socket.off('receiveWebrtcIceCandidate');
+        socket.off('coHostRequestReceived');
+        socket.off('liveAccessRequestReceived');
+
+        // 4. Handle incoming viewers (guests)
         socket.on('hostInitiateWebrtc', async ({ viewerId }) => {
           if (!active) return;
           let pc = peerConnections.current[viewerId];
           if (!pc) {
             pc = new RTCPeerConnection(ICE_SERVERS);
             peerConnections.current[viewerId] = pc;
+
+            pc.onconnectionstatechange = () => {
+              console.log(`[Host WebRTC] Viewer ${viewerId} state: ${pc.connectionState}`);
+            };
+            pc.oniceconnectionstatechange = () => {
+              console.log(`[Host ICE] Viewer ${viewerId}: ${pc.iceConnectionState}`);
+            };
 
             // Add local tracks (Host stream)
             if (localStreamRef.current) {
@@ -291,7 +305,7 @@ export default function LiveStreamPage() {
               });
             }
 
-            // Receive guest (viewer) stream
+            // Receive guest (co-host) stream
             pc.ontrack = (event) => {
               if (event.streams && event.streams[0]) {
                 setRemoteStream(event.streams[0]);
@@ -300,7 +314,11 @@ export default function LiveStreamPage() {
 
             pc.onicecandidate = (event) => {
               if (event.candidate) {
-                socket.emit('liveWebrtcIceCandidate', { targetId: viewerId, candidate: event.candidate, senderId: user.id || user._id });
+                socket.emit('liveWebrtcIceCandidate', {
+                  targetId: viewerId,
+                  candidate: event.candidate,
+                  senderId: user.id || user._id
+                });
               }
             };
           }
@@ -310,11 +328,27 @@ export default function LiveStreamPage() {
           socket.emit('liveWebrtcOffer', { targetId: viewerId, offer, hostId: user.id || user._id });
         });
 
-        // 4. Handle incoming answers
+        // 5. Handle incoming answers from viewers
         socket.on('receiveWebrtcAnswer', async ({ viewerId, answer }) => {
           const pc = peerConnections.current[viewerId];
-          if (pc) {
-            await pc.setRemoteDescription(new RTCSessionDescription(answer));
+          if (pc && pc.signalingState !== 'stable') {
+            try {
+              await pc.setRemoteDescription(new RTCSessionDescription(answer));
+            } catch (err) {
+              console.error('[Host] setRemoteDescription error:', err);
+            }
+          }
+        });
+
+        // 6. Handle ICE candidates from viewers
+        socket.on('receiveWebrtcIceCandidate', async ({ senderId, candidate }) => {
+          const pc = peerConnections.current[senderId];
+          if (pc && candidate) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            } catch (err) {
+              console.warn('[Host] addIceCandidate error:', err);
+            }
           }
         });
 
@@ -343,33 +377,36 @@ export default function LiveStreamPage() {
     };
 
     const proceedToJoinViewer = () => {
+      const hostId = channelName.replace('live_user_', '');
+      const myId = user.id || user._id;
+
       socket.emit('joinLive', {
         channelName,
-        userId: user.id || user._id,
+        userId: myId,
         userName: user.name,
         userAvatar: user.avatar
       });
 
-      // Trigger host to create an offer for us to watch their stream
-      const hostId = channelName.replace('live_user_', ''); 
-      socket.emit('viewerJoinedLive', { channelName, viewerId: user.id || user._id });
+      // Remove stale WebRTC listeners before re-registering
+      socket.off('receiveWebrtcOffer');
+      socket.off('receiveWebrtcIceCandidate');
+      socket.off('coHostRequestApproved');
+      socket.off('coHostRequestDeclined');
+      socket.off('userMuted');
+      socket.off('kickedByHost');
 
+      // Create PeerConnection once (guard against duplicate calls)
       let pc = peerConnections.current['host'];
-      if (!pc) {
-        pc = new RTCPeerConnection({
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }
-          ]
-        });
-        // Debug connection state changes
+      if (!pc || pc.connectionState === 'closed' || pc.connectionState === 'failed') {
+        pc = new RTCPeerConnection(ICE_SERVERS);
+        peerConnections.current['host'] = pc;
+
         pc.onconnectionstatechange = () => {
-          console.log('LiveStreamPage connection state:', pc.connectionState);
+          console.log('[Viewer WebRTC] state:', pc.connectionState);
         };
         pc.oniceconnectionstatechange = () => {
-          console.log('LiveStreamPage ICE connection state:', pc.iceConnectionState);
+          console.log('[Viewer ICE]', pc.iceConnectionState);
         };
-        peerConnections.current['host'] = pc;
 
         // Receive host stream
         pc.ontrack = (event) => {
@@ -380,102 +417,145 @@ export default function LiveStreamPage() {
 
         pc.onicecandidate = (event) => {
           if (event.candidate) {
-            socket.emit('liveWebrtcIceCandidate', { targetId: hostId, candidate: event.candidate, senderId: user.id || user._id });
+            socket.emit('liveWebrtcIceCandidate', {
+              targetId: hostId,
+              candidate: event.candidate,
+              senderId: myId
+            });
           }
         };
+      }
 
-        socket.on('receiveWebrtcOffer', async ({ hostId: senderHostId, offer }) => {
+      // WebRTC signaling handlers — always re-register on this pc instance
+      socket.on('receiveWebrtcOffer', async ({ hostId: senderHostId, offer }) => {
+        if (!active) return;
+        try {
           await pc.setRemoteDescription(new RTCSessionDescription(offer));
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
-          socket.emit('liveWebrtcAnswer', { targetId: senderHostId, answer, viewerId: user.id || user._id });
-        });
+          socket.emit('liveWebrtcAnswer', { targetId: senderHostId, answer, viewerId: myId });
+        } catch (err) {
+          console.error('[Viewer] WebRTC offer handling error:', err);
+        }
+      });
 
-        socket.on('receiveWebrtcIceCandidate', async ({ senderId, candidate }) => {
+      socket.on('receiveWebrtcIceCandidate', async ({ senderId, candidate }) => {
+        if (!active || !candidate) return;
+        try {
           await pc.addIceCandidate(new RTCIceCandidate(candidate));
-        });
+        } catch (err) {
+          console.warn('[Viewer] addIceCandidate error:', err);
+        }
+      });
 
-        // Handle co-host approval decisions
-        socket.on('coHostRequestApproved', async () => {
-          if (!active) return;
-          setCoHostStatus('approved');
-          showToast('success', 'Your request to join was approved! Connecting camera...');
-          try {
-            const vStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-            localStreamRef.current = vStream;
-            setLocalStream(vStream);
+      // Co-host approval
+      socket.on('coHostRequestApproved', async () => {
+        if (!active) return;
+        setCoHostStatus('approved');
+        showToast('success', 'Your request to join was approved! Connecting camera...');
+        try {
+          const vStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          localStreamRef.current = vStream;
+          setLocalStream(vStream);
+          vStream.getTracks().forEach(track => pc.addTrack(track, vStream));
+          // Trigger host renegotiation
+          socket.emit('viewerJoinedLive', { channelName, viewerId: myId });
+        } catch (err) {
+          console.error('Failed to start guest camera:', err);
+          showToast('error', 'Could not access camera/mic for co-hosting.');
+          setCoHostStatus('idle');
+        }
+      });
 
-            // Add local guest tracks to existing PeerConnection
-            vStream.getTracks().forEach(track => {
-              pc.addTrack(track, vStream);
-            });
+      socket.on('coHostRequestDeclined', () => {
+        if (!active) return;
+        setCoHostStatus('declined');
+        showToast('error', 'The host declined your request to join.');
+        setTimeout(() => { if (active) setCoHostStatus('idle'); }, 3000);
+      });
 
-            // Trigger host renegotiation
-            socket.emit('viewerJoinedLive', { channelName, viewerId: user.id || user._id });
-          } catch (err) {
-            console.error('Failed to start guest camera:', err);
-            showToast('error', 'Could not access camera/mic for co-hosting.');
-            setCoHostStatus('idle');
-          }
-        });
+      // Moderation
+      socket.on('userMuted', ({ userId }) => {
+        if (String(userId) === String(myId)) {
+          setMutedUsers(prev => [...prev, userId]);
+          showToast('warning', 'You have been muted by the host.');
+        }
+      });
 
-        socket.on('coHostRequestDeclined', () => {
-          if (active) {
-            setCoHostStatus('declined');
-            showToast('error', 'The host declined your request to join.');
-            setTimeout(() => {
-              if (active) setCoHostStatus('idle');
-            }, 3000);
-          }
-        });
+      socket.on('kickedByHost', () => {
+        showToast('error', 'You were removed from the stream by the host.');
+        navigate('/');
+      });
 
-        // Chat Moderation: Muted by Host
-        socket.on('userMuted', ({ userId }) => {
-          const myId = user.id || user._id;
-          if (String(userId) === String(myId)) {
-            setMutedUsers(prev => [...prev, userId]);
-            showToast('warning', 'You have been muted by the host.');
-          }
-        });
+      // Signal host to create an offer for us
+      socket.emit('viewerJoinedLive', { channelName, viewerId: myId });
 
-        // Kicked from stream by Host
-        socket.on('kickedByHost', () => {
-          showToast('error', 'You were removed from the stream by the host.');
-          navigate('/');
-        });
-      }
     };
 
     const startViewer = () => {
-      if (socket && active) {
-        // Access status handler
-        socket.on('liveAccessStatus', ({ approved }) => {
-          if (approved) {
-            setAccessState('approved');
-            proceedToJoinViewer();
-          } else {
-            setAccessState('pending');
-            socket.emit('requestLiveAccess', { channelName, userId: user.id || user._id, userName: user.name, userAvatar: user.avatar });
-          }
-        });
+      if (!socket || !active) return;
 
-        socket.on('liveAccessApproved', () => {
+      // ── Remove any stale listeners first to prevent stacking ──────────────
+      socket.off('liveAccessStatus');
+      socket.off('liveAccessApproved');
+      socket.off('liveAccessDeclined');
+      socket.off('liveAccessRequired');
+
+      // Handler for access check response
+      const handleAccessStatus = ({ approved, mode, reason }) => {
+        if (!active) return;
+        if (reason === 'stream_not_found') {
+          setAccessState('ended');
+          showToast('error', 'This live stream does not exist or has ended.');
+          return;
+        }
+        if (approved || mode === 'public') {
+          // Public stream or already approved → join immediately
           setAccessState('approved');
           proceedToJoinViewer();
-        });
+        } else {
+          // Private stream → send access request and wait
+          setAccessState('pending');
+          socket.emit('requestLiveAccess', {
+            channelName,
+            userId: user.id || user._id,
+            userName: user.name,
+            userAvatar: user.avatar
+          });
+        }
+      };
 
-        socket.on('liveAccessDeclined', () => {
+      // Handler for when host approves access
+      const handleAccessApproved = ({ channelName: approvedChannel }) => {
+        if (!active) return;
+        if (approvedChannel === channelName) {
+          setAccessState('approved');
+          proceedToJoinViewer();
+        }
+      };
+
+      const handleAccessDeclined = ({ channelName: declinedChannel }) => {
+        if (!active) return;
+        if (declinedChannel === channelName) {
           setAccessState('declined');
           showToast('error', 'Your request to join this private stream was declined.');
-        });
+        }
+      };
 
-        // Request access validation
-        socket.emit('checkLiveAccess', { channelName, userId: user.id || user._id });
-      }
+      socket.on('liveAccessStatus', handleAccessStatus);
+      socket.on('liveAccessApproved', handleAccessApproved);
+      socket.on('liveAccessDeclined', handleAccessDeclined);
+
+      // Check access — server will respond with liveAccessStatus
+      socket.emit('checkLiveAccess', { channelName, userId: user.id || user._id });
     };
 
-    // Shared Chat Listeners
+    // Shared Chat Listeners — remove before re-adding to prevent stacking
     if (socket) {
+      socket.off('liveMessage');
+      socket.off('liveViewerCount');
+      socket.off('liveStreamEnded');
+
       socket.on('liveMessage', (msg) => {
         if (active) setMessages(prev => [...prev, msg]);
       });
@@ -529,7 +609,13 @@ export default function LiveStreamPage() {
         socket.off('liveAccessStatus');
         socket.off('liveAccessApproved');
         socket.off('liveAccessDeclined');
+        socket.off('liveAccessRequired');
         socket.off('liveAccessRequestReceived');
+        socket.off('coHostRequestReceived');
+        socket.off('coHostRequestApproved');
+        socket.off('coHostRequestDeclined');
+        socket.off('kickedByHost');
+        socket.off('userMuted');
       }
     };
   }, [channelName, isHost, socket, hasStartedStream, streamMode]);
@@ -766,6 +852,29 @@ export default function LiveStreamPage() {
     );
   }
 
+  if (!isHost && accessState === 'ended') {
+    return (
+      <div className="fixed inset-0 z-[9999] bg-zinc-950 flex flex-col items-center justify-center p-4 text-white select-none">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl relative overflow-hidden">
+          <div className="absolute top-0 left-0 right-0 h-1.5 bg-zinc-700" />
+          <div className="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center mx-auto mb-4 text-zinc-400">
+            <FiVideo size={24} />
+          </div>
+          <h2 className="text-base font-black text-white mb-2">Stream Not Found</h2>
+          <p className="text-xs text-zinc-400 mb-6 leading-relaxed font-semibold">
+            This live stream has ended or does not exist.
+          </p>
+          <button
+            onClick={() => navigate('/')}
+            className="w-full py-3 bg-zinc-850 hover:bg-zinc-800 text-zinc-300 rounded-2xl font-bold text-xs transition cursor-pointer"
+          >
+            Back to Home
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-[9999] bg-black flex flex-col md:flex-row select-none">
       {/* ─── Main Video Stream Panel ───────────────────────────── */}
@@ -781,6 +890,7 @@ export default function LiveStreamPage() {
                 playsInline
                 muted={isHost}
                 className="w-full h-full object-cover"
+                style={{ transform: isHost ? 'scaleX(-1)' : 'none' }}
               />
               <span className="absolute bottom-2 left-2 px-2.5 py-1 rounded bg-black/60 text-white text-[10px] font-bold">
                 {isHost ? 'You (Host)' : 'Host'}
@@ -794,6 +904,7 @@ export default function LiveStreamPage() {
                 playsInline
                 muted={!isHost}
                 className="w-full h-full object-cover"
+                style={{ transform: isHost ? 'none' : 'scaleX(-1)' }}
               />
               <span className="absolute bottom-2 left-2 px-2.5 py-1 rounded bg-black/60 text-white text-[10px] font-bold">
                 {isHost ? 'Guest' : 'You (Guest)'}
@@ -801,13 +912,14 @@ export default function LiveStreamPage() {
             </div>
           </div>
         ) : (
-          /* Single Stream (Host only) */
-          <video 
+          /* Single Stream */
+          <video
             ref={isHost ? localVideoRef : remoteVideoRef}
-            autoPlay 
+            autoPlay
             playsInline
-            muted={isHost} // Host must be muted locally to prevent echo
-            className="w-full h-full bg-zinc-950 object-cover" 
+            muted={isHost}
+            className="w-full h-full bg-zinc-950 object-cover"
+            style={{ transform: isHost ? 'scaleX(-1)' : 'none' }}
           />
         )}
 
