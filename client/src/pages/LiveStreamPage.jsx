@@ -11,10 +11,14 @@ import TextInputWithEmoji from '../components/ui/TextInputWithEmoji';
 const ICE_SERVERS = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
-    // Free TURN server (openrelay.metered.ca)
-    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }
-  ]
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    // Free TURN server (openrelay.metered.ca) — replace with your own in production
+    { urls: 'turn:openrelay.metered.ca:80',  username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+  ],
+  iceCandidatePoolSize: 10,
 };
 
 export default function LiveStreamPage() {
@@ -45,12 +49,18 @@ export default function LiveStreamPage() {
   // Public/Private Live Session States
   const [hasStartedStream, setHasStartedStream] = useState(!isHost); // For host: require setup screen first
   const [streamMode, setStreamMode] = useState('public'); // 'public' | 'private'
+  const [freeJoinLimit, setFreeJoinLimit] = useState('unlimited'); // 'unlimited' | '5' | '10' | '20' | '50'
   const [pendingAccessRequests, setPendingAccessRequests] = useState([]); // Host: watch access requests
   const [accessState, setAccessState] = useState(isHost ? 'approved' : 'checking'); // Viewers: access status
+  const [pendingReason, setPendingReason] = useState(''); // 'private' | 'limit_reached'
+  const [mirrorCamera, setMirrorCamera] = useState(true); // for local camera preview mirroring
 
   // Live Dual WebRTC States
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
+  const [hostStream, setHostStream] = useState(null);
+  const [coHostStream, setCoHostStream] = useState(null);
+  const [coHostId, setCoHostId] = useState(null);
 
   // References
   const localStreamRef = useRef(null);
@@ -58,6 +68,11 @@ export default function LiveStreamPage() {
   const messagesEndRef = useRef(null);
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
+  const hostVideoRef = useRef(null);
+  const coHostVideoRef = useRef(null);
+  const hostStreamIdRef = useRef(null);
+  const coHostIdRef = useRef(null); // tracks coHostId in closures to avoid stale state
+  const coHostStreamRef = useRef(null); // tracks coHostStream in closures
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
 
@@ -95,19 +110,31 @@ export default function LiveStreamPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Bind local stream
+  // Bind Host stream
   useEffect(() => {
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = localStream;
+    if (hostVideoRef.current) {
+      if (isHost) {
+        hostVideoRef.current.srcObject = localStream;
+      } else {
+        hostVideoRef.current.srcObject = hostStream;
+      }
     }
-  }, [localStream, remoteStream]); // trigger when co-host joins and refs change
+  }, [localStream, hostStream, isHost]);
 
-  // Bind remote stream
+  // Bind Guest / Co-Host stream
   useEffect(() => {
-    if (remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = remoteStream;
+    if (coHostVideoRef.current) {
+      if (isHost) {
+        coHostVideoRef.current.srcObject = coHostStream;
+      } else {
+        if (coHostStatus === 'approved') {
+          coHostVideoRef.current.srcObject = localStream;
+        } else {
+          coHostVideoRef.current.srcObject = coHostStream;
+        }
+      }
     }
-  }, [remoteStream]);
+  }, [localStream, coHostStream, coHostStatus, isHost]);
 
   // Live Duration Timer loop
   useEffect(() => {
@@ -256,6 +283,19 @@ export default function LiveStreamPage() {
         showToast('error', 'Could not access camera or microphone.');
       }
 
+      const triggerRenegotiation = async (viewerId) => {
+        const pc = peerConnections.current[viewerId];
+        if (pc && pc.signalingState !== 'closed') {
+          try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            socket.emit('liveWebrtcOffer', { targetId: viewerId, offer, hostId: user.id || user._id });
+          } catch (err) {
+            console.error('[Host] renegotiation offer creation failed:', err);
+          }
+        }
+      };
+
       if (socket && active) {
         // 1. Notify friends
         const friendIds = friendsList.map(f => f._id || f.id);
@@ -265,7 +305,8 @@ export default function LiveStreamPage() {
           hostAvatar: user.avatar,
           channelName,
           friends: friendIds,
-          mode
+          mode,
+          freeJoinLimit
         });
 
         // 2. Join Room for chat & presence
@@ -282,6 +323,7 @@ export default function LiveStreamPage() {
         socket.off('receiveWebrtcIceCandidate');
         socket.off('coHostRequestReceived');
         socket.off('liveAccessRequestReceived');
+        socket.off('coHostLeftNotify');
 
         // 4. Handle incoming viewers (guests)
         socket.on('hostInitiateWebrtc', async ({ viewerId }) => {
@@ -293,6 +335,32 @@ export default function LiveStreamPage() {
 
             pc.onconnectionstatechange = () => {
               console.log(`[Host WebRTC] Viewer ${viewerId} state: ${pc.connectionState}`);
+              if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+                if (viewerId === coHostIdRef.current) {
+                  // Snapshot the co-host track IDs while we still have the ref
+                  const staleStream = coHostStreamRef.current;
+                  coHostIdRef.current = null;
+                  coHostStreamRef.current = null;
+                  setCoHostStream(null);
+                  setRemoteStream(null);
+                  setCoHostId(null);
+
+                  // Forward removals to other spectators — only remove guest tracks
+                  const guestTrackIds = staleStream
+                    ? new Set(staleStream.getTracks().map(t => t.id))
+                    : new Set();
+                  Object.entries(peerConnections.current).forEach(([otherViewerId, otherPc]) => {
+                    if (otherViewerId !== viewerId && otherPc.signalingState !== 'closed') {
+                      otherPc.getSenders().forEach(sender => {
+                        if (sender.track && guestTrackIds.has(sender.track.id)) {
+                          otherPc.removeTrack(sender);
+                        }
+                      });
+                      triggerRenegotiation(otherViewerId);
+                    }
+                  });
+                }
+              }
             };
             pc.oniceconnectionstatechange = () => {
               console.log(`[Host ICE] Viewer ${viewerId}: ${pc.iceConnectionState}`);
@@ -305,10 +373,36 @@ export default function LiveStreamPage() {
               });
             }
 
+            // Also forward any existing guest stream to this new viewer
+            if (coHostStreamRef.current) {
+              coHostStreamRef.current.getTracks().forEach(track => {
+                pc.addTrack(track, coHostStreamRef.current);
+              });
+            }
+
             // Receive guest (co-host) stream
             pc.ontrack = (event) => {
               if (event.streams && event.streams[0]) {
-                setRemoteStream(event.streams[0]);
+                const guestStream = event.streams[0];
+                setRemoteStream(guestStream);
+                coHostStreamRef.current = guestStream;
+                setCoHostStream(guestStream);
+                coHostIdRef.current = viewerId;
+                setCoHostId(viewerId);
+
+                // Forward this guest stream to all other viewers
+                Object.entries(peerConnections.current).forEach(([otherViewerId, otherPc]) => {
+                  if (otherViewerId !== viewerId && otherPc.signalingState !== 'closed') {
+                    guestStream.getTracks().forEach(track => {
+                      const senders = otherPc.getSenders();
+                      const alreadyAdded = senders.some(s => s.track?.id === track.id);
+                      if (!alreadyAdded) {
+                        otherPc.addTrack(track, guestStream);
+                      }
+                    });
+                    triggerRenegotiation(otherViewerId);
+                  }
+                });
               }
             };
 
@@ -373,6 +467,33 @@ export default function LiveStreamPage() {
             showToast('info', `${userName} requested access to watch your private stream!`);
           }
         });
+
+        // 7. Handle co-host leaving voluntarily
+        socket.on('coHostLeftNotify', ({ viewerId }) => {
+          if (viewerId === coHostIdRef.current) {
+            const staleStream = coHostStreamRef.current;
+            coHostIdRef.current = null;
+            coHostStreamRef.current = null;
+            setCoHostStream(null);
+            setRemoteStream(null);
+            setCoHostId(null);
+
+            const guestTrackIds = staleStream
+              ? new Set(staleStream.getTracks().map(t => t.id))
+              : new Set();
+            Object.entries(peerConnections.current).forEach(([otherViewerId, otherPc]) => {
+              if (otherViewerId !== viewerId && otherPc.signalingState !== 'closed') {
+                otherPc.getSenders().forEach(sender => {
+                  if (sender.track && guestTrackIds.has(sender.track.id)) {
+                    otherPc.removeTrack(sender);
+                  }
+                });
+                triggerRenegotiation(otherViewerId);
+              }
+            });
+            showToast('info', 'The guest has left the broadcast.');
+          }
+        });
       }
     };
 
@@ -408,10 +529,37 @@ export default function LiveStreamPage() {
           console.log('[Viewer ICE]', pc.iceConnectionState);
         };
 
-        // Receive host stream
+        // Receive host / guest streams
         pc.ontrack = (event) => {
+          if (!active) return;
           if (event.streams && event.streams[0]) {
-            setRemoteStream(event.streams[0]);
+            const stream = event.streams[0];
+            console.log('[Viewer WebRTC] track stream ID:', stream.id);
+            
+            if (!hostStreamIdRef.current) {
+              hostStreamIdRef.current = stream.id;
+              setHostStream(stream);
+              setRemoteStream(stream); // compatibility fallback
+            } else if (stream.id === hostStreamIdRef.current) {
+              setHostStream(stream);
+              setRemoteStream(stream); // compatibility fallback
+            } else {
+              setCoHostStream(stream);
+            }
+
+            event.track.onended = () => {
+              console.log('[Viewer WebRTC] track ended:', event.track.kind);
+              if (stream.id !== hostStreamIdRef.current) {
+                setCoHostStream(null);
+              }
+            };
+
+            event.track.onmute = () => {
+              console.log('[Viewer WebRTC] track muted:', event.track.kind);
+              if (stream.id !== hostStreamIdRef.current) {
+                setCoHostStream(null);
+              }
+            };
           }
         };
 
@@ -430,6 +578,10 @@ export default function LiveStreamPage() {
       socket.on('receiveWebrtcOffer', async ({ hostId: senderHostId, offer }) => {
         if (!active) return;
         try {
+          // Handle rollback for renegotiation when already have a local description
+          if (pc.signalingState === 'have-local-offer') {
+            await pc.setLocalDescription({ type: 'rollback' });
+          }
           await pc.setRemoteDescription(new RTCSessionDescription(offer));
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
@@ -509,13 +661,17 @@ export default function LiveStreamPage() {
           showToast('error', 'This live stream does not exist or has ended.');
           return;
         }
-        if (approved || mode === 'public') {
-          // Public stream or already approved → join immediately
+        if (approved) {
+          // Under free limit or already approved → join immediately
           setAccessState('approved');
           proceedToJoinViewer();
         } else {
-          // Private stream → send access request and wait
+          // Private stream or public stream with limit reached → send access request and wait
           setAccessState('pending');
+          setPendingReason(reason === 'limit_reached' ? 'limit_reached' : 'private');
+          if (reason === 'limit_reached') {
+            showToast('info', 'This live stream has reached its free join limit. Requesting access...');
+          }
           socket.emit('requestLiveAccess', {
             channelName,
             userId: user.id || user._id,
@@ -614,6 +770,7 @@ export default function LiveStreamPage() {
         socket.off('coHostRequestReceived');
         socket.off('coHostRequestApproved');
         socket.off('coHostRequestDeclined');
+        socket.off('coHostLeftNotify');
         socket.off('kickedByHost');
         socket.off('userMuted');
       }
@@ -639,6 +796,28 @@ export default function LiveStreamPage() {
         setVideoEnabled(!videoEnabled);
       }
     }
+  };
+
+  const handleLeaveCoHost = () => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(t => t.stop());
+      localStreamRef.current = null;
+      setLocalStream(null);
+    }
+    setCoHostStatus('idle');
+    const myId = user.id || user._id;
+    if (socket) {
+      const pc = peerConnections.current['host'];
+      if (pc) {
+        pc.getSenders().forEach(sender => {
+          if (sender.track) {
+            pc.removeTrack(sender);
+          }
+        });
+      }
+      socket.emit('leaveCoHost', { channelName, viewerId: myId });
+    }
+    showToast('info', 'You left the co-host broadcast.');
   };
 
   // Chat submission
@@ -775,6 +954,30 @@ export default function LiveStreamPage() {
                 <p className="text-[10px] opacity-70 mt-0.5 font-semibold">Viewers must request access; you manually approve them before they join.</p>
               </div>
             </button>
+
+            {/* Free Join Limit Option */}
+            {streamMode === 'public' && (
+              <div className="space-y-3 mt-4 text-left animate-fade-down">
+                <label className="text-[10px] font-black uppercase tracking-wider text-zinc-500 px-1">Free Join Limit (TikTok Style)</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {['unlimited', '5', '10', '20', '50'].map((opt) => (
+                    <button
+                      key={opt}
+                      type="button"
+                      onClick={() => setFreeJoinLimit(opt)}
+                      className={`py-2 px-3 rounded-xl border text-[10px] font-black transition cursor-pointer capitalize ${
+                        freeJoinLimit === opt
+                          ? 'border-red-500 bg-red-500/10 text-white'
+                          : 'border-zinc-800 bg-zinc-950 text-zinc-400 hover:border-zinc-700'
+                      }`}
+                    >
+                      {opt === 'unlimited' ? 'Unlimited' : `${opt} Users`}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[9px] text-zinc-500 font-semibold px-1 mt-1 leading-normal">Once this limit is reached, any new viewers will require your manual approval to watch the stream.</p>
+              </div>
+            )}
           </div>
 
           <div className="flex gap-3">
@@ -809,9 +1012,13 @@ export default function LiveStreamPage() {
               <span className="relative inline-flex rounded-full h-3 w-3 bg-red-600"></span>
             </span>
           </div>
-          <h2 className="text-base font-black text-white mb-2">Private Broadcast Access</h2>
+          <h2 className="text-base font-black text-white mb-2">
+            {pendingReason === 'limit_reached' ? 'Join Limit Reached' : 'Private Broadcast Access'}
+          </h2>
           <p className="text-xs text-zinc-400 mb-6 leading-relaxed font-semibold">
-            This live stream is private. A request has been sent to the host. Please wait for approval.
+            {pendingReason === 'limit_reached'
+              ? 'This public stream has reached its free join limit. Your request has been sent to the host.'
+              : 'This live stream is private. A request has been sent to the host. Please wait for approval.'}
           </p>
           <div className="flex flex-col gap-2">
             <div className="py-2.5 rounded-xl bg-zinc-950 border border-zinc-850 text-zinc-500 text-[10px] font-bold uppercase tracking-wider animate-pulse">
@@ -878,48 +1085,48 @@ export default function LiveStreamPage() {
   return (
     <div className="fixed inset-0 z-[9999] bg-black flex flex-col md:flex-row select-none">
       {/* ─── Main Video Stream Panel ───────────────────────────── */}
-      <div className="relative flex-1 bg-zinc-950 flex items-center justify-center overflow-hidden">
+      <div className={`relative flex-1 bg-zinc-950 flex items-center justify-center overflow-hidden transition-all duration-300 ${showMobileChat ? 'pb-[40vh] md:pb-0' : 'pb-0'}`}>
         {/* Render split streams if co-host is active, otherwise render full screen */}
-        {remoteStream ? (
-          <div className="w-full h-full flex flex-col sm:flex-row">
+        {(isHost ? !!coHostStream : (coHostStatus === 'approved' || !!coHostStream)) ? (
+          <div className="w-full h-full flex flex-col sm:flex-row bg-zinc-950">
             {/* Top/Left Frame: Host Stream */}
             <div className="flex-1 relative bg-black border-b sm:border-b-0 sm:border-r border-sp-border/30">
               <video
-                ref={isHost ? localVideoRef : remoteVideoRef}
+                ref={hostVideoRef}
                 autoPlay
                 playsInline
                 muted={isHost}
-                className="w-full h-full object-cover"
-                style={{ transform: isHost ? 'scaleX(-1)' : 'none' }}
+                className="w-full h-full object-cover animate-fade-in"
+                style={{ transform: (isHost && mirrorCamera) ? 'scaleX(-1)' : 'none' }}
               />
-              <span className="absolute bottom-2 left-2 px-2.5 py-1 rounded bg-black/60 text-white text-[10px] font-bold">
+              <span className="absolute bottom-2 left-2 px-2.5 py-1 rounded bg-black/60 text-white text-[10px] font-bold z-10">
                 {isHost ? 'You (Host)' : 'Host'}
               </span>
             </div>
             {/* Bottom/Right Frame: Guest Stream */}
             <div className="flex-1 relative bg-black">
               <video
-                ref={isHost ? remoteVideoRef : localVideoRef}
+                ref={coHostVideoRef}
                 autoPlay
                 playsInline
-                muted={!isHost}
-                className="w-full h-full object-cover"
-                style={{ transform: isHost ? 'none' : 'scaleX(-1)' }}
+                muted={!isHost && coHostStatus === 'approved'}
+                className="w-full h-full object-cover animate-fade-in"
+                style={{ transform: (!isHost && coHostStatus === 'approved' && mirrorCamera) ? 'scaleX(-1)' : 'none' }}
               />
-              <span className="absolute bottom-2 left-2 px-2.5 py-1 rounded bg-black/60 text-white text-[10px] font-bold">
-                {isHost ? 'Guest' : 'You (Guest)'}
+              <span className="absolute bottom-2 left-2 px-2.5 py-1 rounded bg-black/60 text-white text-[10px] font-bold z-10">
+                {isHost ? 'Guest' : (coHostStatus === 'approved' ? 'You (Guest)' : 'Guest')}
               </span>
             </div>
           </div>
         ) : (
           /* Single Stream */
           <video
-            ref={isHost ? localVideoRef : remoteVideoRef}
+            ref={hostVideoRef}
             autoPlay
             playsInline
             muted={isHost}
-            className="w-full h-full bg-zinc-950 object-cover"
-            style={{ transform: isHost ? 'scaleX(-1)' : 'none' }}
+            className="w-full h-full bg-zinc-950 object-cover animate-fade-in"
+            style={{ transform: (isHost && mirrorCamera) ? 'scaleX(-1)' : 'none' }}
           />
         )}
 
@@ -1062,29 +1269,53 @@ export default function LiveStreamPage() {
           </div>
         </div>
 
-        {/* Bottom controls panel for Host */}
-        {isHost && (
-          <div className={`absolute left-1/2 -translate-x-1/2 flex items-center gap-4 z-10 transition-all duration-300 md:bottom-4 ${showMobileChat ? 'bottom-[calc(40vh+16px)]' : 'bottom-4'}`}>
+        {/* Bottom controls panel for Host or Approved Co-Host */}
+        {(isHost || coHostStatus === 'approved') && (
+          <div className={`absolute left-1/2 -translate-x-1/2 flex items-center gap-3.5 z-10 transition-all duration-300 md:bottom-4 ${showMobileChat ? 'bottom-[calc(40vh+16px)]' : 'bottom-4'}`}>
             <button
               onClick={toggleMic}
-              className={`w-12 h-12 rounded-full flex items-center justify-center transition shadow-lg
-                ${micEnabled ? 'bg-zinc-800 text-white' : 'bg-red-600 text-white'}`}
+              className={`w-11 h-11 rounded-full flex items-center justify-center transition shadow-lg cursor-pointer
+                ${micEnabled ? 'bg-zinc-800 hover:bg-zinc-700 text-white' : 'bg-red-600 hover:bg-red-700 text-white'}`}
+              title={micEnabled ? "Mute Microphone" : "Unmute Microphone"}
             >
-              {micEnabled ? <FiMic size={20} /> : <FiMicOff size={20} />}
+              {micEnabled ? <FiMic size={18} /> : <FiMicOff size={18} />}
             </button>
             <button
               onClick={toggleVideo}
-              className={`w-12 h-12 rounded-full flex items-center justify-center transition shadow-lg
-                ${videoEnabled ? 'bg-zinc-800 text-white' : 'bg-red-600 text-white'}`}
+              className={`w-11 h-11 rounded-full flex items-center justify-center transition shadow-lg cursor-pointer
+                ${videoEnabled ? 'bg-zinc-800 hover:bg-zinc-700 text-white' : 'bg-red-600 hover:bg-red-700 text-white'}`}
+              title={videoEnabled ? "Turn Camera Off" : "Turn Camera On"}
             >
-              {videoEnabled ? <FiVideo size={20} /> : <FiVideoOff size={20} />}
+              {videoEnabled ? <FiVideo size={18} /> : <FiVideoOff size={18} />}
             </button>
+            
+            {/* Mirror Camera Preview Toggle */}
             <button
-              onClick={handleEndStream}
-              className="px-6 h-12 rounded-full bg-red-600 text-white font-bold transition shadow-lg hover:bg-red-700"
+              onClick={() => setMirrorCamera(prev => !prev)}
+              className={`w-11 h-11 rounded-full flex items-center justify-center transition shadow-lg cursor-pointer
+                ${mirrorCamera ? 'bg-zinc-800 hover:bg-zinc-700 text-white' : 'bg-zinc-950 text-zinc-500 border border-zinc-800'}`}
+              title="Mirror Camera Preview"
             >
-              End Live
+              <svg stroke="currentColor" fill="none" strokeWidth="2" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5" xmlns="http://www.w3.org/2000/svg">
+                <path d="M16 3h5v5M8 3H3v5M21 3l-7 7M3 3l7 7M18 21h3v-3M6 21H3v-3M21 21l-7-7M3 21l7-7"></path>
+              </svg>
             </button>
+
+            {isHost ? (
+              <button
+                onClick={handleEndStream}
+                className="px-5 h-11 rounded-full bg-red-600 hover:bg-red-700 text-white font-bold transition shadow-lg text-xs cursor-pointer active:scale-95"
+              >
+                End Live
+              </button>
+            ) : (
+              <button
+                onClick={handleLeaveCoHost}
+                className="px-5 h-11 rounded-full bg-amber-600 hover:bg-amber-700 text-white font-bold transition shadow-lg text-xs cursor-pointer active:scale-95"
+              >
+                Leave Co-Host
+              </button>
+            )}
           </div>
         )}
       </div>

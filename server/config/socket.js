@@ -2,9 +2,9 @@ const socketio = require('socket.io');
 const User = require('../models/User');
 const Message = require('../models/Message');
 
-// userId (string) -> socketId
+// userId (string) -> Set of socketId (strings)
 const onlineUsers = new Map();
-// channelName -> { hostId, hostName, hostAvatar, channelName, viewersCount, mode, approvedViewers: Set<string> }
+// channelName -> { hostId, hostName, hostAvatar, channelName, viewersCount, mode, freeJoinLimit, approvedViewers: Set<string> }
 const activeLiveStreams = new Map();
 
 const initSocket = (server) => {
@@ -17,6 +17,19 @@ const initSocket = (server) => {
     pingInterval: 25000,
   });
 
+  // Helper: Get all active socket IDs for a user ID
+  const getUserSocketIds = (userId) => {
+    return onlineUsers.get(String(userId)) || new Set();
+  };
+
+  // Helper: Emit event to all sockets of a specific user
+  const emitToUser = (userId, eventName, data) => {
+    const sids = getUserSocketIds(userId);
+    for (const sid of sids) {
+      io.to(sid).emit(eventName, data);
+    }
+  };
+
   io.on('connection', (socket) => {
     console.log(`🔌 Socket connected: ${socket.id}`);
 
@@ -24,12 +37,19 @@ const initSocket = (server) => {
     socket.on('join', async (userId) => {
       if (!userId) return;
       socket.userId = String(userId);
-      onlineUsers.set(socket.userId, socket.id);
-      console.log(`👤 User ${socket.userId} joined on socket ${socket.id}`);
+      
+      if (!onlineUsers.has(socket.userId)) {
+        onlineUsers.set(socket.userId, new Set());
+      }
+      onlineUsers.get(socket.userId).add(socket.id);
+      console.log(`👤 User ${socket.userId} joined on socket ${socket.id} (total sockets: ${onlineUsers.get(socket.userId).size})`);
 
       try {
-        const user = await User.findByIdAndUpdate(userId, { isOnline: true }, { new: true });
+        const user = await User.findById(userId).select('blockedUsers');
         if (!user) return;
+
+        // Set online status in DB
+        await User.findByIdAndUpdate(userId, { isOnline: true });
 
         const usersWhoBlockedMe = await User.find({ blockedUsers: userId }).select('_id');
         const excludedIds = new Set([
@@ -37,9 +57,11 @@ const initSocket = (server) => {
           ...usersWhoBlockedMe.map(u => String(u._id))
         ]);
 
-        for (const [otherUserId, otherSocketId] of onlineUsers.entries()) {
+        for (const [otherUserId, otherSocketIds] of onlineUsers.entries()) {
           if (!excludedIds.has(otherUserId) && otherUserId !== socket.userId) {
-            io.to(otherSocketId).emit('userStatusChanged', { userId: socket.userId, isOnline: true });
+            for (const otherSid of otherSocketIds) {
+              io.to(otherSid).emit('userStatusChanged', { userId: socket.userId, isOnline: true });
+            }
           }
         }
       } catch (err) {
@@ -49,13 +71,17 @@ const initSocket = (server) => {
 
     // ─── Typing ───────────────────────────────────────────────────────────────
     socket.on('typing', ({ senderId, receiverId }) => {
-      const sid = onlineUsers.get(String(receiverId));
-      if (sid) io.to(sid).emit('userTyping', { senderId });
+      const sids = getUserSocketIds(receiverId);
+      for (const sid of sids) {
+        io.to(sid).emit('userTyping', { senderId });
+      }
     });
 
     socket.on('stopTyping', ({ senderId, receiverId }) => {
-      const sid = onlineUsers.get(String(receiverId));
-      if (sid) io.to(sid).emit('userStopTyping', { senderId });
+      const sids = getUserSocketIds(receiverId);
+      for (const sid of sids) {
+        io.to(sid).emit('userStopTyping', { senderId });
+      }
     });
 
     // ─── Read receipts ────────────────────────────────────────────────────────
@@ -68,8 +94,11 @@ const initSocket = (server) => {
           { conversation: conversationId, sender: senderId, status: { $ne: 'seen' } },
           { $set: { status: 'seen' } }
         );
-        const senderSid = onlineUsers.get(String(senderId));
-        if (senderSid) io.to(senderSid).emit('messagesSeen', { conversationId });
+        
+        const senderSids = getUserSocketIds(senderId);
+        for (const sid of senderSids) {
+          io.to(sid).emit('messagesSeen', { conversationId });
+        }
       } catch (err) {
         console.error('Error marking seen:', err);
       }
@@ -77,8 +106,8 @@ const initSocket = (server) => {
 
     // ─── Call signaling ───────────────────────────────────────────────────────
     socket.on('makeCall', ({ targetId, channelName, video, callerName, callerAvatar }) => {
-      const sid = onlineUsers.get(String(targetId));
-      if (sid) {
+      const sids = getUserSocketIds(targetId);
+      for (const sid of sids) {
         io.to(sid).emit('incomingCall', {
           callerId: socket.userId,
           channelName,
@@ -90,45 +119,60 @@ const initSocket = (server) => {
     });
 
     socket.on('recipientRinging', ({ callerId }) => {
-      const sid = onlineUsers.get(String(callerId));
-      if (sid) io.to(sid).emit('peerRinging');
+      const sids = getUserSocketIds(callerId);
+      for (const sid of sids) {
+        io.to(sid).emit('peerRinging');
+      }
     });
 
     socket.on('acceptCall', ({ callerId }) => {
-      const sid = onlineUsers.get(String(callerId));
-      if (sid) io.to(sid).emit('callAccepted');
+      const sids = getUserSocketIds(callerId);
+      for (const sid of sids) {
+        io.to(sid).emit('callAccepted');
+      }
     });
 
     socket.on('declineCall', ({ callerId }) => {
-      const sid = onlineUsers.get(String(callerId));
-      if (sid) io.to(sid).emit('callDeclined');
+      const sids = getUserSocketIds(callerId);
+      for (const sid of sids) {
+        io.to(sid).emit('callDeclined');
+      }
     });
 
     socket.on('endCall', ({ targetId }) => {
-      const sid = onlineUsers.get(String(targetId));
-      if (sid) io.to(sid).emit('callEnded');
+      const sids = getUserSocketIds(targetId);
+      for (const sid of sids) {
+        io.to(sid).emit('callEnded');
+      }
     });
 
     // WebRTC call relay
     socket.on('callOffer', ({ targetId, offer }) => {
-      const sid = onlineUsers.get(String(targetId));
-      if (sid) io.to(sid).emit('receiveCallOffer', { offer, senderId: socket.userId });
+      const sids = getUserSocketIds(targetId);
+      for (const sid of sids) {
+        io.to(sid).emit('receiveCallOffer', { offer, senderId: socket.userId });
+      }
     });
 
     socket.on('callAnswer', ({ targetId, answer }) => {
-      const sid = onlineUsers.get(String(targetId));
-      if (sid) io.to(sid).emit('receiveCallAnswer', { answer, senderId: socket.userId });
+      const sids = getUserSocketIds(targetId);
+      for (const sid of sids) {
+        io.to(sid).emit('receiveCallAnswer', { answer, senderId: socket.userId });
+      }
     });
 
     socket.on('callIceCandidate', ({ targetId, candidate }) => {
-      const sid = onlineUsers.get(String(targetId));
-      if (sid) io.to(sid).emit('receiveCallIceCandidate', { candidate, senderId: socket.userId });
+      const sids = getUserSocketIds(targetId);
+      for (const sid of sids) {
+        io.to(sid).emit('receiveCallIceCandidate', { candidate, senderId: socket.userId });
+      }
     });
 
     // ─── Live Streaming ───────────────────────────────────────────────────────
 
-    socket.on('goLive', async ({ hostId, hostName, hostAvatar, channelName, friends, mode }) => {
+    socket.on('goLive', async ({ hostId, hostName, hostAvatar, channelName, mode, freeJoinLimit }) => {
       const streamMode = mode || 'public';
+      const limit = (freeJoinLimit && freeJoinLimit !== 'unlimited') ? parseInt(freeJoinLimit, 10) : null;
 
       activeLiveStreams.set(channelName, {
         hostId: String(hostId),
@@ -137,34 +181,40 @@ const initSocket = (server) => {
         channelName,
         viewersCount: 1,
         mode: streamMode,
+        freeJoinLimit: limit,
         approvedViewers: new Set([String(hostId)])
       });
 
       socket.join(`live_${channelName}`);
       socket.liveChannel = channelName;
 
-      // Resolve friends list
-      let notifyList = friends && Array.isArray(friends) ? friends.map(String) : [];
-      if (notifyList.length === 0) {
-        try {
-          const hostUser = await User.findById(hostId).select('friends');
-          if (hostUser?.friends) {
-            notifyList = hostUser.friends.map(id => String(id));
-          }
-        } catch (err) {
-          console.error('Failed to get host friends:', err);
+      // Always fetch actual friends list from database to ensure everyone is notified correctly
+      let notifyList = [];
+      try {
+        const hostUser = await User.findById(hostId).select('friends');
+        if (hostUser?.friends) {
+          notifyList = hostUser.friends.map(id => String(id));
         }
+      } catch (err) {
+        console.error('Failed to query friends list for live status update:', err);
       }
 
-      // Notify friends in real-time
+      // Notify all friends across all their active socket connections
       for (const friendId of notifyList) {
-        const sid = onlineUsers.get(friendId);
-        if (sid) {
-          io.to(sid).emit('friendWentLive', { hostId: String(hostId), hostName, hostAvatar, channelName, mode: streamMode });
+        const sids = getUserSocketIds(friendId);
+        for (const sid of sids) {
+          io.to(sid).emit('friendWentLive', {
+            hostId: String(hostId),
+            hostName,
+            hostAvatar,
+            channelName,
+            mode: streamMode,
+            freeJoinLimit: limit
+          });
         }
       }
 
-      // Save notifications in DB
+      // Save live notifications in Database
       try {
         const Notification = require('../models/Notification');
         await Promise.allSettled(
@@ -181,33 +231,51 @@ const initSocket = (server) => {
         console.error('Error saving live notifications:', err);
       }
 
-      console.log(`📡 ${hostName} went live: ${channelName} (${streamMode})`);
+      console.log(`📡 ${hostName} went live: ${channelName} (${streamMode}, freeLimit: ${limit})`);
     });
 
     // Viewer checks if they can join
-    // Public → immediately approved. Private → check approvedViewers.
     socket.on('checkLiveAccess', ({ channelName, userId }) => {
       const stream = activeLiveStreams.get(channelName);
       if (!stream) {
         socket.emit('liveAccessStatus', { approved: false, reason: 'stream_not_found' });
         return;
       }
+
       if (stream.mode === 'public') {
-        socket.emit('liveAccessStatus', { approved: true, mode: 'public' });
+        const activeViewerCount = io.sockets.adapter.rooms.get(`live_${channelName}`)?.size || 0;
+        const limit = stream.freeJoinLimit;
+
+        // If public and under free join limit → join freely
+        if (!limit || activeViewerCount < limit) {
+          socket.emit('liveAccessStatus', { approved: true, mode: 'public' });
+          return;
+        }
+
+        // Limit reached → falls back to private approval join logic
+        const isApproved = stream.approvedViewers.has(String(userId));
+        socket.emit('liveAccessStatus', { 
+          approved: isApproved, 
+          mode: 'public', 
+          limitReached: true,
+          reason: 'limit_reached'
+        });
         return;
       }
+
       // Private stream
       const isApproved = stream.approvedViewers.has(String(userId));
       socket.emit('liveAccessStatus', { approved: isApproved, mode: 'private' });
     });
 
-    // Viewer requests access to private stream
+    // Viewer requests access to private stream or public stream when limit reached
     socket.on('requestLiveAccess', ({ channelName, userId, userName, userAvatar }) => {
       const stream = activeLiveStreams.get(channelName);
       if (!stream) return;
-      const hostSid = onlineUsers.get(String(stream.hostId));
-      if (hostSid) {
-        io.to(hostSid).emit('liveAccessRequestReceived', {
+
+      const hostSids = getUserSocketIds(stream.hostId);
+      for (const sid of hostSids) {
+        io.to(sid).emit('liveAccessRequestReceived', {
           userId: String(userId),
           userName,
           userAvatar,
@@ -216,23 +284,24 @@ const initSocket = (server) => {
       }
     });
 
-    // Host approves viewer — critical: include channelName in response
+    // Host approves viewer — emits to all viewer tabs
     socket.on('approveLiveAccess', ({ channelName, viewerId }) => {
       const stream = activeLiveStreams.get(channelName);
       if (stream) {
         stream.approvedViewers.add(String(viewerId));
       }
-      const viewerSid = onlineUsers.get(String(viewerId));
-      if (viewerSid) {
-        io.to(viewerSid).emit('liveAccessApproved', { channelName, viewerId: String(viewerId) });
+      
+      const viewerSids = getUserSocketIds(viewerId);
+      for (const sid of viewerSids) {
+        io.to(sid).emit('liveAccessApproved', { channelName, viewerId: String(viewerId) });
       }
     });
 
     // Host declines viewer
     socket.on('declineLiveAccess', ({ channelName, viewerId }) => {
-      const viewerSid = onlineUsers.get(String(viewerId));
-      if (viewerSid) {
-        io.to(viewerSid).emit('liveAccessDeclined', { channelName, viewerId: String(viewerId) });
+      const viewerSids = getUserSocketIds(viewerId);
+      for (const sid of viewerSids) {
+        io.to(sid).emit('liveAccessDeclined', { channelName, viewerId: String(viewerId) });
       }
     });
 
@@ -240,19 +309,26 @@ const initSocket = (server) => {
     socket.on('joinLive', ({ channelName, userId, userName, userAvatar }) => {
       const stream = activeLiveStreams.get(channelName);
 
-      if (stream && stream.mode === 'private') {
-        if (!stream.approvedViewers.has(String(userId))) {
-          socket.emit('liveAccessRequired', { channelName });
-          return;
+      if (stream) {
+        // Double-check private / limit access settings
+        if (stream.mode === 'private') {
+          if (!stream.approvedViewers.has(String(userId))) {
+            socket.emit('liveAccessRequired', { channelName });
+            return;
+          }
+        } else if (stream.mode === 'public' && stream.freeJoinLimit) {
+          const activeViewerCount = io.sockets.adapter.rooms.get(`live_${channelName}`)?.size || 0;
+          if (activeViewerCount >= stream.freeJoinLimit && !stream.approvedViewers.has(String(userId))) {
+            socket.emit('liveAccessRequired', { channelName });
+            return;
+          }
         }
+
+        stream.viewersCount = (stream.viewersCount || 0) + 1;
       }
 
       socket.join(`live_${channelName}`);
       socket.liveChannel = channelName;
-
-      if (stream) {
-        stream.viewersCount = (stream.viewersCount || 0) + 1;
-      }
 
       io.to(`live_${channelName}`).emit('liveMessage', {
         id: Date.now().toString(),
@@ -308,32 +384,47 @@ const initSocket = (server) => {
     // ─── Co-Host signaling ────────────────────────────────────────────────────
     socket.on('requestCoHost', ({ channelName, userId, userName, userAvatar }) => {
       const hostId = channelName.replace('live_user_', '');
-      const hostSid = onlineUsers.get(hostId);
-      if (hostSid) {
-        io.to(hostSid).emit('coHostRequestReceived', { userId: String(userId), userName, userAvatar, channelName });
+      const hostSids = getUserSocketIds(hostId);
+      for (const sid of hostSids) {
+        io.to(sid).emit('coHostRequestReceived', { userId: String(userId), userName, userAvatar, channelName });
       }
     });
 
     socket.on('approveCoHost', ({ channelName, viewerId }) => {
-      const viewerSid = onlineUsers.get(String(viewerId));
-      if (viewerSid) io.to(viewerSid).emit('coHostRequestApproved', { channelName });
+      const viewerSids = getUserSocketIds(viewerId);
+      for (const sid of viewerSids) {
+        io.to(sid).emit('coHostRequestApproved', { channelName });
+      }
     });
 
     socket.on('declineCoHost', ({ channelName, viewerId }) => {
-      const viewerSid = onlineUsers.get(String(viewerId));
-      if (viewerSid) io.to(viewerSid).emit('coHostRequestDeclined', { channelName });
+      const viewerSids = getUserSocketIds(viewerId);
+      for (const sid of viewerSids) {
+        io.to(sid).emit('coHostRequestDeclined', { channelName });
+      }
+    });
+
+    socket.on('leaveCoHost', ({ channelName, viewerId }) => {
+      const hostId = channelName.replace('live_user_', '');
+      const hostSids = getUserSocketIds(hostId);
+      for (const sid of hostSids) {
+        io.to(sid).emit('coHostLeftNotify', { viewerId: String(viewerId), channelName });
+      }
     });
 
     // ─── Host moderation ──────────────────────────────────────────────────────
-    // Fixed: mute only the target user not all viewers
     socket.on('muteUser', ({ channelName, userId }) => {
-      const viewerSid = onlineUsers.get(String(userId));
-      if (viewerSid) io.to(viewerSid).emit('userMuted', { userId: String(userId) });
+      const viewerSids = getUserSocketIds(userId);
+      for (const sid of viewerSids) {
+        io.to(sid).emit('userMuted', { userId: String(userId) });
+      }
     });
 
     socket.on('kickUser', ({ channelName, userId }) => {
-      const viewerSid = onlineUsers.get(String(userId));
-      if (viewerSid) io.to(viewerSid).emit('kickedByHost', { channelName });
+      const viewerSids = getUserSocketIds(userId);
+      for (const sid of viewerSids) {
+        io.to(sid).emit('kickedByHost', { channelName });
+      }
     });
 
     // ─── Live WebRTC signaling ────────────────────────────────────────────────
@@ -342,18 +433,24 @@ const initSocket = (server) => {
     });
 
     socket.on('liveWebrtcOffer', ({ targetId, offer, hostId }) => {
-      const sid = onlineUsers.get(String(targetId));
-      if (sid) io.to(sid).emit('receiveWebrtcOffer', { hostId, offer });
+      const sids = getUserSocketIds(targetId);
+      for (const sid of sids) {
+        io.to(sid).emit('receiveWebrtcOffer', { hostId, offer });
+      }
     });
 
     socket.on('liveWebrtcAnswer', ({ targetId, answer, viewerId }) => {
-      const sid = onlineUsers.get(String(targetId));
-      if (sid) io.to(sid).emit('receiveWebrtcAnswer', { viewerId, answer });
+      const sids = getUserSocketIds(targetId);
+      for (const sid of sids) {
+        io.to(sid).emit('receiveWebrtcAnswer', { viewerId, answer });
+      }
     });
 
     socket.on('liveWebrtcIceCandidate', ({ targetId, candidate, senderId }) => {
-      const sid = onlineUsers.get(String(targetId));
-      if (sid) io.to(sid).emit('receiveWebrtcIceCandidate', { senderId, candidate });
+      const sids = getUserSocketIds(targetId);
+      for (const sid of sids) {
+        io.to(sid).emit('receiveWebrtcIceCandidate', { senderId, candidate });
+      }
     });
 
     // ─── Disconnect ───────────────────────────────────────────────────────────
@@ -376,32 +473,39 @@ const initSocket = (server) => {
         io.to(`live_${channelName}`).emit('liveViewerCount', clientCount);
       }
 
-      if (socket.userId) {
-        onlineUsers.delete(socket.userId);
-        try {
-          const user = await User.findByIdAndUpdate(
-            socket.userId,
-            { isOnline: false, lastSeen: new Date() },
-            { new: true }
-          );
-          if (user) {
-            const usersWhoBlockedMe = await User.find({ blockedUsers: socket.userId }).select('_id');
-            const excludedIds = new Set([
-              ...(user.blockedUsers || []).map(id => String(id)),
-              ...usersWhoBlockedMe.map(u => String(u._id))
-            ]);
-            for (const [otherUserId, otherSocketId] of onlineUsers.entries()) {
-              if (!excludedIds.has(otherUserId) && otherUserId !== socket.userId) {
-                io.to(otherSocketId).emit('userStatusChanged', {
-                  userId: socket.userId,
-                  isOnline: false,
-                  lastSeen: user.lastSeen
-                });
+      if (socket.userId && onlineUsers.has(socket.userId)) {
+        const sids = onlineUsers.get(socket.userId);
+        sids.delete(socket.id);
+        
+        if (sids.size === 0) {
+          onlineUsers.delete(socket.userId);
+          try {
+            const user = await User.findByIdAndUpdate(
+              socket.userId,
+              { isOnline: false, lastSeen: new Date() },
+              { new: true }
+            );
+            if (user) {
+              const usersWhoBlockedMe = await User.find({ blockedUsers: socket.userId }).select('_id');
+              const excludedIds = new Set([
+                ...(user.blockedUsers || []).map(id => String(id)),
+                ...usersWhoBlockedMe.map(u => String(u._id))
+              ]);
+              for (const [otherUserId, otherSocketIds] of onlineUsers.entries()) {
+                if (!excludedIds.has(otherUserId) && otherUserId !== socket.userId) {
+                  for (const otherSid of otherSocketIds) {
+                    io.to(otherSid).emit('userStatusChanged', {
+                      userId: socket.userId,
+                      isOnline: false,
+                      lastSeen: user.lastSeen
+                    });
+                  }
+                }
               }
             }
+          } catch (err) {
+            console.error('Error setting user offline:', err);
           }
-        } catch (err) {
-          console.error('Error setting user offline:', err);
         }
       }
     });
