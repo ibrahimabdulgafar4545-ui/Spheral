@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
-import { FiPlus, FiX, FiChevronLeft, FiChevronRight, FiHeart, FiVolume2, FiVolumeX, FiTrash2 } from 'react-icons/fi';
+import { FiPlus, FiX, FiChevronLeft, FiChevronRight, FiHeart, FiVolume2, FiVolumeX, FiTrash2, FiImage } from 'react-icons/fi';
 import { useApp } from '../../context/AppContext';
 import { timeAgo, getAssetUrl, parseMentions } from '../../utils/helpers';
 import { usersAPI } from '../../api/users';
@@ -163,6 +163,7 @@ function StoryCard({ story, onClick }) {
         src={getAssetUrl(story.slides[0]?.image)}
         alt=""
         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+        onError={(e) => { e.target.style.display='none'; e.target.parentElement.style.background='#18181b'; }}
       />
       <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-black/30" />
 
@@ -422,6 +423,18 @@ function StoryViewer({ stories, initialIndex, onClose }) {
                 muted={muted}
                 key={`${si}-${slide}`}
                 onLoadedMetadata={handleVideoLoadedMetadata}
+                onError={(e) => {
+                  const el = e.target;
+                  el.style.display = 'none';
+                  const p = el.parentElement;
+                  if (!p.querySelector('[data-media-err]')) {
+                    const d = document.createElement('div');
+                    d.setAttribute('data-media-err', '1');
+                    d.className = 'absolute inset-0 flex flex-col items-center justify-center bg-zinc-950 text-zinc-500 text-xs gap-2';
+                    d.innerHTML = '<span style="font-size:2rem">🎞️</span><span>Media unavailable</span>';
+                    p.appendChild(d);
+                  }
+                }}
               />
             );
           }
@@ -431,6 +444,18 @@ function StoryViewer({ stories, initialIndex, onClose }) {
               alt=""
               className="w-full h-full object-cover"
               key={`${si}-${slide}`}
+              onError={(e) => {
+                const el = e.target;
+                el.style.display = 'none';
+                const p = el.parentElement;
+                if (!p.querySelector('[data-media-err]')) {
+                  const d = document.createElement('div');
+                  d.setAttribute('data-media-err', '1');
+                  d.className = 'absolute inset-0 flex flex-col items-center justify-center bg-zinc-950 text-zinc-500 text-xs gap-2';
+                  d.innerHTML = '<span style="font-size:2rem">🖼️</span><span>Image unavailable</span>';
+                  p.appendChild(d);
+                }
+              }}
             />
           );
         })()}

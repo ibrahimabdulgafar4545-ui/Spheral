@@ -1,5 +1,4 @@
 import { useLocation } from 'react-router-dom';
-import Navbar from './Navbar';
 import LeftSidebar from './LeftSidebar';
 import RightSidebar from './RightSidebar';
 import LiveNotificationBanner from '../ui/LiveNotificationBanner';
@@ -20,7 +19,6 @@ export default function MainLayout({ children, hideRight = false, hideSidebars =
 
   return (
     <div className="min-h-screen bg-sp-bg">
-      <Navbar />
       <LiveNotificationBanner />
       <div className="pt-[calc(3.5rem+env(safe-area-inset-top,0px))]">
         {hideSidebars ? (

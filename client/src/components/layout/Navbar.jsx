@@ -60,8 +60,9 @@ export default function Navbar() {
   const searchParams = new URLSearchParams(location.search);
   const chatParam = searchParams.get('chat');
   const isMobileChat = location.pathname.startsWith('/messages') && chatParam && typeof window !== 'undefined' && window.innerWidth < 768;
+  const isLivePage = location.pathname.startsWith('/live');
 
-  if (isMobileChat) {
+  if (isMobileChat || isLivePage) {
     return null;
   }
 

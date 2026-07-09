@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import MainLayout from '../components/layout/MainLayout';
 import { useApp } from '../context/AppContext';
@@ -9,7 +10,7 @@ import {
   FiHeart, FiMessageCircle, FiShare2, FiMusic, FiVolume2, FiVolumeX,
   FiPlus, FiX, FiSend, FiBookmark, FiDownload, FiMoreVertical,
   FiLink, FiThumbsDown, FiThumbsUp, FiFlag, FiTrash2, FiExternalLink,
-  FiSmile, FiPaperclip, FiEdit2, FiVideo
+  FiSmile, FiPaperclip, FiEdit2, FiVideo, FiVideoOff
 } from 'react-icons/fi';
 import { BsBookmarkFill } from 'react-icons/bs';
 import Avatar from '../components/ui/Avatar';
@@ -806,6 +807,7 @@ function ReelItem({ reel, currentUser, isActive, onVisible, onLike, onSave, onCo
 
   const [paused, setPaused]     = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [videoError, setVideoError] = useState(false);
   const [followed, setFollowed] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const { showToast }           = useApp();
@@ -1120,12 +1122,23 @@ function ReelItem({ reel, currentUser, isActive, onVisible, onLike, onSave, onCo
       style={{ minHeight: '100%' }}>
 
       {/* Video */}
-      <video ref={videoRef} src={getAssetUrl(reel.videoUrl)}
-        className="h-full w-full object-cover cursor-pointer"
-        loop playsInline muted={muted}
-        onPointerDown={handlePointerDown}
-        onPointerUp={handlePointerUp}
-        onPointerLeave={handlePointerLeave} />
+      {videoError ? (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950 p-6 text-center z-10">
+          <FiVideoOff size={36} className="text-zinc-600 mb-4" />
+          <h4 className="text-zinc-300 font-bold text-sm mb-1">Reel Unavailable</h4>
+          <p className="text-zinc-500 text-xs max-w-[220px] leading-relaxed">
+            This media file is no longer available on the server. Live stream archives may be lost when the server restarts.
+          </p>
+        </div>
+      ) : (
+        <video ref={videoRef} src={getAssetUrl(reel.videoUrl)}
+          className="h-full w-full object-cover cursor-pointer"
+          loop playsInline muted={muted}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
+          onPointerLeave={handlePointerLeave}
+          onError={() => setVideoError(true)} />
+      )}
 
       {/* Gradient */}
       <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-black/20 pointer-events-none" />
@@ -1298,18 +1311,72 @@ function ReelItem({ reel, currentUser, isActive, onVisible, onLike, onSave, onCo
             </button>
             <span className="text-white text-[10px] font-semibold drop-shadow mt-2.3">More</span>
 
-            {/* Dropdown — floats left, opens upward */}
+            {/* Dropdown — floats left on desktop, bottom sheet on mobile */}
             {showMenu && (
-              <div className="absolute right-14 bottom-0 w-52 bg-sp-card border border-sp-border rounded-2xl shadow-2xl overflow-hidden animate-scale-in z-50">
-                {menuItems.map(({ icon: Icon, label, action, danger }) => (
-                  <button key={label} onClick={e => { e.stopPropagation(); action(); }}
-                    className={`w-full flex items-center gap-3 px-4 py-3 text-sm hover:bg-sp-hover transition-colors text-left
-                      ${danger ? 'text-red-400' : 'text-sp-text'}`}>
-                    <Icon size={16} className={`flex-shrink-0 ${danger ? 'text-red-400' : 'text-sp-muted'}`} />
-                    {label}
-                  </button>
-                ))}
-              </div>
+              <>
+                {/* Desktop dropdown menu */}
+                <div className="hidden md:block absolute right-14 bottom-0 w-52 bg-sp-card border border-sp-border rounded-2xl shadow-2xl overflow-hidden animate-scale-in z-50">
+                  {menuItems.map(({ icon: Icon, label, action, danger }) => (
+                    <button key={label} onClick={e => { e.stopPropagation(); action(); }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 text-sm hover:bg-sp-hover transition-colors text-left
+                        ${danger ? 'text-red-400' : 'text-sp-text'}`}>
+                      <Icon size={16} className={`flex-shrink-0 ${danger ? 'text-red-400' : 'text-sp-muted'}`} />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Mobile Bottom Sheet (Portal) */}
+                {createPortal(
+                  <div 
+                    className="md:hidden fixed inset-0 z-[99999] flex items-end justify-center select-none" 
+                    onClick={(e) => { e.stopPropagation(); setShowMenu(false); }}
+                  >
+                    {/* Backdrop shadow */}
+                    <div className="absolute inset-0 bg-black/70 backdrop-blur-sm transition-opacity duration-300 animate-fade-in" />
+                    
+                    {/* Drawer Content */}
+                    <div 
+                      className="relative w-full bg-sp-card rounded-t-3xl border-t border-sp-border p-5 pb-[calc(2.5rem+env(safe-area-inset-bottom,0px))] z-10 animate-slide-up flex flex-col gap-3 max-h-[80vh] overflow-y-auto"
+                      onClick={e => e.stopPropagation()}
+                    >
+                      {/* Pull handle bar */}
+                      <div className="w-12 h-1.5 bg-sp-border rounded-full mx-auto mb-2" />
+                      
+                      {/* Title */}
+                      <h3 className="text-center font-bold text-sp-text text-sm mb-1 uppercase tracking-wider opacity-70">
+                        Options
+                      </h3>
+
+                      {/* Options list */}
+                      <div className="flex flex-col gap-2">
+                        {menuItems.map(({ icon: Icon, label, action, danger }) => (
+                          <button 
+                            key={label} 
+                            onClick={e => { e.stopPropagation(); action(); }}
+                            className={`w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl transition-colors text-left font-semibold text-base border border-sp-border/40
+                              ${danger 
+                                ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20 active:bg-red-500/15 border-red-500/20' 
+                                : 'bg-sp-overlay text-sp-text hover:bg-sp-hover active:bg-sp-hover/80'}`}
+                          >
+                            <Icon size={18} className={`flex-shrink-0 ${danger ? 'text-red-500' : 'text-sp-muted'}`} />
+                            <span>{label}</span>
+                          </button>
+                        ))}
+                      </div>
+                      
+                      {/* Close button */}
+                      <button 
+                        onClick={() => setShowMenu(false)}
+                        className="w-full text-center py-3.5 bg-sp-divider hover:bg-sp-hover rounded-xl font-bold text-sp-text text-base mt-2 border border-sp-border/80"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>,
+                  document.body
+                )}
+              </>
             )}
           </div>
         </div>

@@ -241,16 +241,16 @@ export default function CallOverlay({ callData, callState, onAccept, onDecline, 
           const stream = (event.streams && event.streams[0]) ? event.streams[0] : null;
           if (!stream) return;
 
-          if (callData.video) {
-            if (remoteVideoRef.current) {
-              remoteVideoRef.current.srcObject = stream;
-              remoteVideoRef.current.play().catch(e => console.warn("Video play failed:", e));
-            }
-          } else {
-            if (remoteAudioRef.current) {
-              remoteAudioRef.current.srcObject = stream;
-              remoteAudioRef.current.play().catch(e => console.warn("Audio play failed:", e));
-            }
+          // Always set the stream to the hidden audio element to guarantee audio playout
+          if (remoteAudioRef.current) {
+            remoteAudioRef.current.srcObject = stream;
+            remoteAudioRef.current.play().catch(e => console.warn("Audio play failed:", e));
+          }
+
+          // If it is a video call, also bind to the video element
+          if (callData.video && remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = stream;
+            remoteVideoRef.current.play().catch(e => console.warn("Video play failed:", e));
           }
         };
 
@@ -370,7 +370,7 @@ export default function CallOverlay({ callData, callState, onAccept, onDecline, 
             } catch (err) {
               console.error('[Call] Error creating offer:', err);
             }
-          }, 600);
+          }, 50);
         }
 
       } catch (err) {
@@ -498,10 +498,8 @@ export default function CallOverlay({ callData, callState, onAccept, onDecline, 
               </div>
             )}
 
-            {/* Hidden audio element to play incoming audio during audio-only calls */}
-            {!callData.video && (
-              <audio ref={remoteAudioRef} autoPlay playsInline />
-            )}
+            {/* Hidden audio element to play incoming audio during all calls */}
+            <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
 
             {/* Local Stream Container (Picture in Picture) */}
             {callData.video && !videoOff && (

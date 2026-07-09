@@ -36,6 +36,8 @@ import AboutPage from './pages/AboutPage';
 import AdminDashboardPage from './pages/AdminDashboardPage';
 import VerificationCelebrationModal from './components/modals/VerificationCelebrationModal';
 
+import Navbar from './components/layout/Navbar';
+
 // Protected Route Wrapper
 import AdminRoute from './components/routing/AdminRoute';
 
@@ -66,11 +68,13 @@ function MainApp() {
   const { 
     toast, hideToast, callState, callData, acceptCall, declineCall, endCall, user,
     sharedEmbed, closeShareToStory, handleShareToStoryComplete,
-    showVerificationCelebration, closeVerificationCelebration
+    showVerificationCelebration, closeVerificationCelebration,
+    isAuthenticated
   } = useApp();
 
   return (
     <>
+      {isAuthenticated && <Navbar />}
       <Routes>
         {/* Auth pages */}
         <Route path="/login"  element={<AuthRoute><LoginPage /></AuthRoute>} />

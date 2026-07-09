@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import {
   FiMoreHorizontal, FiBookmark, FiFlag, FiUserMinus,
   FiGlobe, FiLock, FiShare2, FiMessageCircle, FiMapPin,
-  FiX, FiExternalLink, FiTrash2, FiThumbsUp, FiHeart, FiSmile, FiEye, FiFrown, FiMinusCircle, FiStar
+  FiX, FiExternalLink, FiTrash2, FiThumbsUp, FiHeart, FiSmile, FiEye, FiFrown, FiMinusCircle, FiStar, FiImage
 } from 'react-icons/fi';
 import { BsBookmarkFill } from 'react-icons/bs';
 import { useApp } from '../../context/AppContext';
@@ -45,6 +45,7 @@ export default function Post({ post, onArchiveToggle }) {
   const [saved, setSaved]                   = useState(post.saved || false);
   const [imageOpen, setImageOpen]           = useState(false);
   const [localReactions, setLocalReactions] = useState(post.reactions || []);
+  const [imageError, setImageError]         = useState(false);
 
   useEffect(() => {
     setLocalComments(post.commentsCount);
@@ -287,14 +288,22 @@ export default function Post({ post, onArchiveToggle }) {
         {post.image && (
           <div
             className="overflow-hidden cursor-zoom-in border-t border-b border-sp-divider"
-            onClick={() => setImageOpen(true)}
+            onClick={() => !imageError && setImageOpen(true)}
           >
-            <img
-              src={getAssetUrl(post.image)}
-              alt=""
-              className="w-full max-h-[520px] object-cover hover:brightness-95 transition-all duration-500"
-              loading="lazy"
-            />
+            {imageError ? (
+              <div className="flex flex-col items-center justify-center gap-2 py-10 bg-sp-elevated">
+                <FiImage size={28} className="text-sp-muted" />
+                <span className="text-sp-muted text-xs font-medium">Image unavailable</span>
+              </div>
+            ) : (
+              <img
+                src={getAssetUrl(post.image)}
+                alt=""
+                className="w-full max-h-[520px] object-cover hover:brightness-95 transition-all duration-500"
+                loading="lazy"
+                onError={() => setImageError(true)}
+              />
+            )}
           </div>
         )}
 

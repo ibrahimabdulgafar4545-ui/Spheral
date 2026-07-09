@@ -1088,11 +1088,19 @@ export default function LiveStreamPage() {
       <div className={`relative flex-1 bg-zinc-950 flex items-center justify-center overflow-hidden transition-all duration-300 ${showMobileChat ? 'pb-[40vh] md:pb-0' : 'pb-0'}`}>
         {/* Render split streams if co-host is active, otherwise render full screen */}
         {(isHost ? !!coHostStream : (coHostStatus === 'approved' || !!coHostStream)) ? (
-          <div className="w-full h-full flex flex-col sm:flex-row bg-zinc-950">
+          <div className="w-full h-full flex flex-row bg-zinc-950">
             {/* Top/Left Frame: Host Stream */}
-            <div className="flex-1 relative bg-black border-b sm:border-b-0 sm:border-r border-sp-border/30">
+            <div className="flex-1 relative bg-black border-r border-sp-border/30">
               <video
-                ref={hostVideoRef}
+                ref={(el) => {
+                  hostVideoRef.current = el;
+                  if (el) {
+                    const targetStream = isHost ? localStream : hostStream;
+                    if (el.srcObject !== targetStream) {
+                      el.srcObject = targetStream;
+                    }
+                  }
+                }}
                 autoPlay
                 playsInline
                 muted={isHost}
@@ -1106,7 +1114,15 @@ export default function LiveStreamPage() {
             {/* Bottom/Right Frame: Guest Stream */}
             <div className="flex-1 relative bg-black">
               <video
-                ref={coHostVideoRef}
+                ref={(el) => {
+                  coHostVideoRef.current = el;
+                  if (el) {
+                    const targetStream = isHost ? coHostStream : (coHostStatus === 'approved' ? localStream : coHostStream);
+                    if (el.srcObject !== targetStream) {
+                      el.srcObject = targetStream;
+                    }
+                  }
+                }}
                 autoPlay
                 playsInline
                 muted={!isHost && coHostStatus === 'approved'}
@@ -1121,7 +1137,15 @@ export default function LiveStreamPage() {
         ) : (
           /* Single Stream */
           <video
-            ref={hostVideoRef}
+            ref={(el) => {
+              hostVideoRef.current = el;
+              if (el) {
+                const targetStream = isHost ? localStream : hostStream;
+                if (el.srcObject !== targetStream) {
+                  el.srcObject = targetStream;
+                }
+              }
+            }}
             autoPlay
             playsInline
             muted={isHost}

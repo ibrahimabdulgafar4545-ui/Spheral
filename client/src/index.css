@@ -395,3 +395,13 @@ html[dir="rtl"] svg.chevron {
   transform: scaleX(-1);
 }
 
+/* Custom slide-up animation for mobile drawer menus */
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+.animate-slide-up {
+  animation: slideUp 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+
